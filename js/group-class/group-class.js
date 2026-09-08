@@ -1,0 +1,777 @@
+// ============================================================================
+// js/group-class/group-class.js  —  STEP 11E: GROUP CLASS CRUD (SCOPE-LIMITED)
+// ============================================================================
+// Đây là ES module thật (cùng convention tách module với js/students/students.js,
+// js/lessons/lessons.js, js/calendar/calendar.js — xem comment trong index.html tại vị trí
+// nạp module này). Module này tự expose các hàm cần thiết qua window ở cuối file để (a) các
+// onclick="..."/onchange="..."/oninput="..." trong HTML gọi được, và (b) script chính (classic
+// script) có thể gọi lại nếu cần.
+//
+// DEPENDENCY: module này ĐỌC các global do script chính/state.js định nghĩa (activeTutorId,
+// supabaseClient, escapeHtml, showToast, describeSupabaseError, switchTutorPage,
+// activeGroupClassId, gcCurrentTab, groupClassList). Module này KHÔNG import những thứ đó
+// (cùng lý do với Students/Lessons/Calendar: module bị hoãn/defer, chạy SAU khi script chính đã
+// chạy xong, nên tại thời điểm các hàm dưới đây THỰC SỰ được gọi, mọi global trên đã tồn tại).
+//
+// PHẠM VI STEP 11E (CHỈ ĐÚNG NHỮNG GÌ LIỆT KÊ, KHÔNG HƠN):
+//   1. Group Class List (load/render/search/filter)
+//   2. Create Group Class
+//   3. Edit Group Class (tên/môn học/trạng thái)
+//   4. Open Group Class Detail (shell: hero + KPI placeholder + 4 tab)
+//   5. Group Class Overview (tab "Tổng quan" — nội dung thật DUY NHẤT trong Detail)
+//   6. Search/filter Group Class
+//   7. Status active/inactive/completed (qua Edit modal)
+//
+// CHỦ Ý KHÔNG CÓ Ở STEP NÀY (để dành cho step sau — KHÔNG code ở đây dù chỉ 1 dòng):
+//   - Enrollment CRUD / group_class_enrollments UI (tab "Học viên" chỉ placeholder tĩnh)
+//   - Group Session CRUD / group_sessions UI (tab "Buổi học" chỉ placeholder tĩnh)
+//   - Attendance / Attendance Matrix (tab "Điểm danh" chỉ placeholder tĩnh)
+//   - Bất kỳ query nào tới group_class_enrollments/group_sessions/attendance — KPI trong Detail
+//     CHỦ Ý hiển thị giá trị an toàn tĩnh (0/"chưa có dữ liệu"), KHÔNG query 3 bảng trên chỉ để
+//     lấp số liệu KPI (đúng yêu cầu "DO NOT query attendance/enrollment/payment tables merely to
+//     populate future KPI").
+//   - Calendar/Finance/Billing/Reports integration.
+//   - Không có nút "Xóa lớp" (xem khối comment "NO HARD DELETE" ngay dưới).
+//
+// STEP 11F-B-FIX — GHI ĐÈ 1 DÒNG DUY NHẤT ở trên: Enrollment CRUD thật đã được triển khai ở
+// js/group-class/enrollment.js (STEP 11F-B/11F-C, tab "Học viên"). STEP NÀY (11F-B-FIX) chỉ bổ
+// sung phần "Sĩ số" (KPI card + dòng trong Overview) đọc lại đúng active enrollment count —
+// group-class.js VẪN KHÔNG tự query group_class_enrollments (giữ nguyên nguyên tắc "no query chỉ
+// để lấp KPI" ở trên): số liệu lấy qua 2 hàm ĐỌC window.getCachedActiveEnrollmentCount()/
+// window.getActiveEnrollmentCount() do enrollment.js expose (xem
+// refreshGroupClassOverviewEnrollmentCount() bên dưới) — CHỈ query Supabase khi cache của
+// enrollment.js chưa có sẵn cho đúng lớp đang mở (ví dụ vừa mở Detail, chưa từng vào tab "Học
+// viên" lần nào). Các KPI còn lại (Tổng buổi/Hoàn thành/Tỷ lệ chuyên cần/Doanh thu) TIẾP TỤC là
+// placeholder tĩnh, KHÔNG đụng tới.
+//
+// STEP 11G-B — GHI ĐÈ 1 DÒNG DUY NHẤT ở mục "CHỦ Ý KHÔNG CÓ Ở STEP NÀY" phía trên: Group Session
+// List + Create thật đã được triển khai ở js/group-class/session.js (tab "Buổi học") — xem
+// switchGroupClassTab() bên dưới (nhánh gọi window.loadGroupSessionsIfNeeded). group-class.js VẪN
+// KHÔNG tự query group_sessions (giữ nguyên nguyên tắc "không nhét toàn bộ Session logic vào
+// group-class.js" — chỉ điều phối tab/entry point). Tab "Điểm danh" và Overview KPI (Tổng
+// buổi/Hoàn thành) TIẾP TỤC là placeholder tĩnh, KHÔNG đụng tới ở STEP này.
+//
+// NO HARD DELETE (bắt buộc đọc trước khi sửa file này):
+//   group_classes/group_class_enrollments/group_sessions/attendance dùng FK ON DELETE CASCADE
+//   (STEP 11A/11A-FIX, đã apply STEP 11B — xem STEP_11A_DATABASE_SCHEMA_REPORT.md). Xóa cứng 1
+//   group_classes sẽ CASCADE xóa toàn bộ enrollment/session/attendance liên quan — không thể
+//   hoàn tác. Vì vậy Group Class CHỦ Ý không có nút xóa (khác với removeClass() của Students,
+//   KHÔNG copy hành vi đó sang đây) — vòng đời lớp chỉ thay đổi qua trường "Trạng thái"
+//   (active/inactive/completed) trong Edit modal.
+//
+// SUPABASE-ONLY: Group Class là tính năng MỚI, chỉ hoạt động khi có activeTutorId (phiên
+// Supabase — Tutor tự đăng nhập hoặc Admin đang quản lý hộ 1 Tutor cụ thể). KHÔNG hỗ trợ tài
+// khoản local-only cũ (activeTutorId null) — KHÔNG tạo thêm 1 cơ chế lưu localStorage song song
+// cho Group Class (khác với Students, vốn có lịch sử hỗ trợ local trước khi có Supabase).
+// ============================================================================
+
+// ----------------------------------------------------------------------
+// SOURCE OF TRUTH state của riêng Group Class (chỉ dùng trong module này, KHÔNG có bản sao nào
+// khác). window.activeGroupClassId/window.gcCurrentTab/window.groupClassList được khai báo ở
+// js/core/state.js (STEP 11E) — đây là state DÙNG CHUNG duy nhất được thêm, đúng scope yêu cầu.
+// ----------------------------------------------------------------------
+var gcSearchState = { query: '', subject: 'all', status: 'all' };
+var editingGroupClassId = null;
+
+// STEP 11E-FIX — CONTEXT-AWARE CACHE GUARD (thay cho boolean `groupClassListLoaded` cũ).
+// ROOT CAUSE đã sửa: guard cũ là 1 boolean không gắn với activeTutorId nào — khi Admin đang
+// "quản lý hộ" chuyển từ Tutor A sang Tutor B (activeTutorId đổi A -> B) NGAY TRONG CÙNG 1
+// phiên trình duyệt, guard cũ vẫn coi là "đã load rồi" và render lại groupClassList đang cache
+// của Tutor A cho màn hình Tutor B — sai dữ liệu, dù RLS/DB hoàn toàn đúng (đây là bug hiển thị
+// ở tầng cache client, không phải bug bảo mật).
+// FIX: lưu ĐÚNG activeTutorId mà cache hiện tại thuộc về. Guard chỉ dùng cache khi
+// groupClassListLoadedForTutorId === activeTutorId (so sánh với giá trị HIỆN TẠI của
+// activeTutorId tại thời điểm gọi, không hard-code bất kỳ tutor id nào). Khác thì luôn phải
+// query lại Supabase cho đúng tutor đang active.
+var groupClassListLoadedForTutorId = null;
+
+// STEP 11E guard chống double-submit (double-click nút) — cùng pattern addClassInFlight/
+// saveEditClassInFlight của js/students/students.js.
+var addGroupClassInFlight = false;
+var saveEditGroupClassInFlight = false;
+
+// Group Class-specific status metadata — KHÔNG tái dùng lessonStatusMeta (khác domain: đây là
+// group_classes.status, CHECK IN ('active','inactive','completed'), hoàn toàn khác tập giá trị
+// scheduled/completed/absent/cancelled của lessons.status).
+var groupClassStatusMeta = {
+    active:    { label: 'Đang hoạt động', color: '#10b981' },
+    inactive:  { label: 'Tạm ngưng',      color: '#f59e0b' },
+    completed: { label: 'Đã hoàn thành',  color: '#6b7280' }
+};
+
+function buildGroupClassStatusBadgeHtml(status) {
+    var meta = groupClassStatusMeta[status] || groupClassStatusMeta.active;
+    return '<span style="color:' + meta.color + '; font-size:12px; margin-left:10px;">[' + meta.label + ']</span>';
+}
+
+// ----------------------------------------------------------------------
+// LOAD (Supabase, context-aware cache theo activeTutorId) + RENDER LIST + SEARCH/FILTER
+// ----------------------------------------------------------------------
+// Được gọi từ switchTutorPage('group-classes') mỗi lần vào trang. Chỉ tái dùng cache
+// groupClassList khi cache đó THỰC SỰ thuộc về activeTutorId hiện tại
+// (groupClassListLoadedForTutorId === activeTutorId) — nếu Admin vừa chuyển sang quản lý 1
+// Tutor khác (activeTutorId đổi), điều kiện này tự động false và bắt buộc query lại Supabase
+// cho đúng tutor mới, KHÔNG bao giờ render nhầm cache của tutor trước đó.
+async function loadGroupClassesIfNeeded() {
+    if (groupClassListLoadedForTutorId === activeTutorId) { renderGroupClassList(); return; }
+    await loadGroupClasses();
+}
+
+async function loadGroupClasses() {
+    var container = document.getElementById('group-class-container');
+
+    if (!activeTutorId) {
+        // Không có phiên Supabase (tài khoản local cũ) — Group Class không hỗ trợ, hiển thị
+        // rỗng thay vì lỗi (không có gì để tải). Vẫn ghi nhận đúng context (activeTutorId =
+        // null lúc này) để lần gọi sau so sánh nhất quán, không hard-code giá trị nào khác.
+        groupClassList = [];
+        groupClassListLoadedForTutorId = activeTutorId;
+        renderGroupClassList();
+        return;
+    }
+
+    if (container) {
+        container.innerHTML = '<div style="color:var(--text-sub); text-align:center; padding:30px; font-size:14px;">⏳ Đang tải danh sách lớp nhóm...</div>';
+    }
+
+    try {
+        // .eq('tutor_id', activeTutorId) tường minh — cùng convention loadTutorClassList()
+        // (public.students) — KHÔNG chỉ dựa vào RLS, vì khi Admin đang quản lý hộ 1 Tutor cụ
+        // thể, RLS admin là "FOR ALL" (thấy toàn bộ tutor), filter tường minh này mới đảm bảo
+        // Group Class List chỉ hiện đúng lớp của activeTutorId đang được quản lý, không lẫn lớp
+        // của tutor khác.
+        var result = await supabaseClient
+            .from('group_classes')
+            .select('id, tutor_id, name, subject, status, created_at')
+            .eq('tutor_id', activeTutorId)
+            .order('created_at', { ascending: false });
+
+        if (result.error) {
+            console.error('[GROUP CLASS] Tải danh sách lớp nhóm FAILED:', result.error);
+            if (container) {
+                container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:30px; font-size:14px;">⚠️ Không tải được danh sách lớp nhóm.<br>' + escapeHtml(describeSupabaseError(result.error)) + '</div>';
+            }
+            return;
+        }
+
+        groupClassList = result.data || [];
+        groupClassListLoadedForTutorId = activeTutorId; // ghi nhận ĐÚNG tutor mà cache này vừa tải cho — dùng chính giá trị activeTutorId hiện tại, không hard-code
+        renderGroupClassList();
+    } catch (err) {
+        console.error('[GROUP CLASS] Tải danh sách lớp nhóm EXCEPTION:', err);
+        if (container) {
+            container.innerHTML = '<div style="color:#ef4444; text-align:center; padding:30px; font-size:14px;">⚠️ Lỗi không xác định khi tải danh sách lớp nhóm.</div>';
+        }
+    }
+}
+
+function applyGroupClassFilters(list) {
+    var q = (gcSearchState.query || '').trim().toLowerCase();
+    var subjectFilter = gcSearchState.subject;
+    var statusFilter = gcSearchState.status;
+    return list.filter(function(gc) {
+        if (q) {
+            var hay = [gc.name, gc.subject].filter(Boolean).join(' ').toLowerCase();
+            if (hay.indexOf(q) === -1) return false;
+        }
+        if (subjectFilter !== 'all' && (gc.subject || '') !== subjectFilter) return false;
+        if (statusFilter !== 'all' && (gc.status || '') !== statusFilter) return false;
+        return true;
+    });
+}
+
+// Dựng lại option "Môn học" TỪ ĐÚNG dữ liệu groupClassList hiện tại (không hard-code) — cùng
+// convention renderTutorStudentFilterOptions(). "Trạng thái" KHÔNG dựng động: group_classes.status
+// là enum cố định (CHECK IN active/inactive/completed) nên option đã hard-code sẵn trong HTML —
+// khác với "Môn học" là free-text nên phải dựng từ dữ liệu thật.
+function renderGroupClassFilterOptions() {
+    var subjectSel = document.getElementById('gc-subject-filter');
+    if (!subjectSel) return;
+
+    var subjects = Array.from(new Set(groupClassList.map(function(gc) { return gc.subject; }).filter(Boolean))).sort();
+    subjectSel.innerHTML = '<option value="all">Môn học: Tất cả</option>'
+        + subjects.map(function(s) { return '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>'; }).join('');
+
+    subjectSel.value = subjects.indexOf(gcSearchState.subject) > -1 ? gcSearchState.subject : 'all';
+    if (subjectSel.value === 'all') gcSearchState.subject = 'all';
+}
+
+function onGroupClassSearchInput(value) {
+    gcSearchState.query = value;
+    renderGroupClassList();
+}
+
+function onGroupClassFilterChange(key, value) {
+    gcSearchState[key] = value;
+    renderGroupClassList();
+}
+
+function renderGroupClassList() {
+    var container = document.getElementById('group-class-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (groupClassList.length === 0) {
+        container.innerHTML = '<div style="color:#9ca3af; text-align:center; padding:30px; font-size:14px;">Chưa có lớp nhóm nào được thêm.</div>';
+        renderGroupClassFilterOptions();
+        return;
+    }
+
+    renderGroupClassFilterOptions();
+    var visible = applyGroupClassFilters(groupClassList);
+
+    if (visible.length === 0) {
+        container.innerHTML = '<div style="color:#9ca3af; text-align:center; padding:30px; font-size:14px;">Không tìm thấy lớp nhóm phù hợp.</div>';
+        return;
+    }
+
+    visible.forEach(function(gc) {
+        var statusBadge = buildGroupClassStatusBadgeHtml(gc.status);
+        var idJs = "'" + String(gc.id).replace(/'/g, "\\'") + "'";
+
+        var card = document.createElement('div'); card.className = 'class-card';
+        card.innerHTML = `
+            <div class="class-meta" onclick="openGroupClassDetail(${idJs})">
+                <h4><strong>${escapeHtml(gc.name)}</strong> - <span style="color:#00cca3">${escapeHtml(gc.subject)}</span> ${statusBadge}</h4>
+                <div>
+                    <span class="sched-tag">👥 Sĩ số: Chưa có học viên</span>
+                    <span class="sched-tag">📅 Buổi tiếp theo: Chưa có buổi học</span>
+                    <span class="profile-btn-tag">📝 Vào chi tiết lớp ➔</span>
+                </div>
+            </div>
+            <div style="display:flex; align-items:center; gap:16px;">
+                <button onclick="openEditGroupClass(${idJs}); event.stopPropagation();" class="btn-edit-class" title="Chỉnh sửa lớp nhóm">✏️</button>
+            </div>
+        `;
+        // Ghi chú "Sĩ số"/"Buổi tiếp theo" CỐ Ý là text tĩnh ở STEP 11E (chưa có
+        // group_class_enrollments/group_sessions UI) — KHÔNG query 2 bảng đó chỉ để lấp số liệu
+        // này, đúng yêu cầu phạm vi STEP 11E. Sẽ được thay bằng số liệu thật ở STEP triển khai
+        // Enrollment/Session.
+        container.appendChild(card);
+    });
+}
+
+// ----------------------------------------------------------------------
+// TẠO LỚP NHÓM MỚI
+// ----------------------------------------------------------------------
+async function addNewGroupClass() {
+    var name = document.getElementById('gc-name').value.trim();
+    var subject = document.getElementById('gc-subject').value.trim();
+
+    if (!name || !subject) { alert('Vui lòng nhập đầy đủ Tên lớp và Môn học!'); return; }
+
+    if (!activeTutorId) {
+        alert('Tính năng Lớp nhóm chỉ khả dụng với tài khoản đã đăng nhập Supabase.');
+        return;
+    }
+
+    // STEP 11E guard chống double-submit — cùng pattern addClassInFlight (students.js).
+    if (addGroupClassInFlight) return;
+    addGroupClassInFlight = true;
+    var addBtn = document.getElementById('add-group-class-btn');
+    var addBtnOrigText = addBtn ? addBtn.innerText : null;
+    if (addBtn) { addBtn.disabled = true; addBtn.innerText = 'Đang lưu...'; }
+
+    try {
+        // KHÔNG truyền status — dùng đúng DEFAULT 'active' của group_classes.status ở DB (không
+        // hard-code 'active' ở client rồi gửi lên, để DB luôn là nguồn sự thật duy nhất cho giá
+        // trị mặc định này).
+        var insertResult = await supabaseClient
+            .from('group_classes')
+            .insert({ tutor_id: activeTutorId, name: name, subject: subject })
+            .select()
+            .single();
+
+        if (insertResult.error || !insertResult.data) {
+            console.error('[GROUP CLASS] Tạo lớp nhóm FAILED:', insertResult.error);
+            alert('⚠️ Không thể tạo lớp nhóm: ' + (insertResult.error ? describeSupabaseError(insertResult.error) : 'không nhận được dữ liệu trả về'));
+            return;
+        }
+
+        groupClassList.unshift(insertResult.data);
+
+        document.getElementById('gc-name').value = '';
+        document.getElementById('gc-subject').value = '';
+
+        renderGroupClassList();
+        showToast('✅', 'Đã tạo lớp nhóm', insertResult.data.name);
+    } catch (err) {
+        console.error('[GROUP CLASS] Tạo lớp nhóm EXCEPTION:', err);
+        alert('⚠️ Lỗi không xác định khi tạo lớp nhóm.');
+    } finally {
+        addGroupClassInFlight = false;
+        if (addBtn) { addBtn.disabled = false; addBtn.innerText = addBtnOrigText; }
+    }
+}
+
+// ----------------------------------------------------------------------
+// SỬA LỚP NHÓM (modal) — tên/môn học/trạng thái. KHÔNG có nút xóa (xem "NO HARD DELETE" ở đầu file).
+// ----------------------------------------------------------------------
+function openEditGroupClass(id) {
+    var gc = groupClassList.find(function(x) { return x.id === id; });
+    if (!gc) return;
+    editingGroupClassId = id;
+
+    document.getElementById('ecgc-name').value = gc.name;
+    document.getElementById('ecgc-subject').value = gc.subject;
+    document.getElementById('ecgc-status').value = gc.status || 'active';
+    var errBox = document.getElementById('edit-group-class-error');
+    if (errBox) { errBox.style.display = 'none'; errBox.innerText = ''; }
+
+    document.getElementById('edit-group-class-modal').classList.add('open');
+}
+
+// Nút "✏️ Sửa lớp" trong Group Class Detail (hero) — mở đúng modal Edit ở trên cho
+// activeGroupClassId đang xem, KHÔNG tạo modal/form thứ hai riêng cho Detail.
+function openEditGroupClassFromDetail() {
+    if (activeGroupClassId == null) return;
+    openEditGroupClass(activeGroupClassId);
+}
+
+function closeEditGroupClass() {
+    document.getElementById('edit-group-class-modal').classList.remove('open');
+    editingGroupClassId = null;
+}
+
+async function saveEditGroupClass() {
+    var gc = groupClassList.find(function(x) { return x.id === editingGroupClassId; });
+    if (!gc) return;
+
+    var name = document.getElementById('ecgc-name').value.trim();
+    var subject = document.getElementById('ecgc-subject').value.trim();
+    var status = document.getElementById('ecgc-status').value;
+    var errBox = document.getElementById('edit-group-class-error');
+
+    function showModalError(msg) {
+        if (errBox) { errBox.innerText = msg; errBox.style.display = 'block'; }
+        else { alert(msg); }
+    }
+
+    if (!name) { showModalError('Vui lòng nhập Tên lớp.'); return; }
+    if (!subject) { showModalError('Vui lòng nhập Môn học.'); return; }
+    if (['active', 'inactive', 'completed'].indexOf(status) === -1) { showModalError('Trạng thái không hợp lệ.'); return; }
+
+    // STEP 11E guard chống double-submit — cùng pattern saveEditClassInFlight (students.js).
+    if (saveEditGroupClassInFlight) return;
+    saveEditGroupClassInFlight = true;
+    var saveBtn = document.getElementById('save-edit-group-class-btn');
+    var saveBtnOrigText = saveBtn ? saveBtn.innerText : null;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.innerText = 'Đang lưu...'; }
+
+    try {
+        var updResult = await supabaseClient
+            .from('group_classes')
+            .update({ name: name, subject: subject, status: status })
+            .eq('id', editingGroupClassId)
+            .select()
+            .single();
+
+        if (updResult.error || !updResult.data) {
+            console.error('[GROUP CLASS] Sửa lớp nhóm FAILED:', updResult.error);
+            showModalError('⚠️ Không thể lưu: ' + (updResult.error ? describeSupabaseError(updResult.error) : 'không nhận được dữ liệu trả về'));
+            return;
+        }
+
+        // Supabase là SOURCE OF TRUTH — cập nhật lại đúng object trong cache từ row vừa trả về.
+        gc.name = updResult.data.name;
+        gc.subject = updResult.data.subject;
+        gc.status = updResult.data.status;
+
+        renderGroupClassList();
+        closeEditGroupClass();
+        showToast('✅', 'Đã lưu thay đổi', gc.name);
+
+        // Nếu đang mở Group Class Detail của đúng lớp này thì cập nhật lại hero/tiêu đề ngay,
+        // không bắt tutor phải đóng/mở lại Detail mới thấy thay đổi (cùng tinh thần
+        // saveEditClassActual() cập nhật lại #view-student-title khi đang mở đúng hồ sơ đó).
+        if (activeGroupClassId === gc.id) {
+            renderGroupClassDetailHero(gc);
+            renderGroupClassOverviewTab(gc);
+        }
+    } catch (err) {
+        console.error('[GROUP CLASS] Sửa lớp nhóm EXCEPTION:', err);
+        showModalError('⚠️ Lỗi không xác định khi lưu.');
+    } finally {
+        saveEditGroupClassInFlight = false;
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.innerText = saveBtnOrigText; }
+    }
+}
+
+// ----------------------------------------------------------------------
+// GROUP CLASS DETAIL (shell: hero + KPI placeholder + 4 tab, chỉ tab "Tổng quan" có nội dung)
+// ----------------------------------------------------------------------
+function openGroupClassDetail(id) {
+    var gc = groupClassList.find(function(x) { return x.id === id; });
+    if (!gc) return;
+    activeGroupClassId = id;
+
+    document.getElementById('main-page-view').style.display = 'none';
+    document.getElementById('group-class-detail-view').style.display = 'block';
+
+    renderGroupClassDetailHero(gc);
+    renderGroupClassDetailKpiPlaceholders();
+    renderGroupClassOverviewTab(gc);
+    switchGroupClassTab('overview');
+}
+
+function closeGroupClassDetail() {
+    document.getElementById('group-class-detail-view').style.display = 'none';
+    document.getElementById('main-page-view').style.display = 'flex';
+    activeGroupClassId = null;
+    renderGroupClassList(); // phản ánh ngay nếu vừa sửa lớp trong lúc ở Detail
+}
+
+function renderGroupClassDetailHero(gc) {
+    document.getElementById('gc-detail-title').innerText = 'Lớp nhóm: ' + gc.name;
+    document.getElementById('gc-detail-subtitle').innerText = 'Bộ môn: ' + gc.subject;
+    document.getElementById('gc-hero-name').innerText = gc.name;
+    document.getElementById('gc-hero-meta').innerText = 'Môn học: ' + gc.subject;
+    document.getElementById('gc-hero-status').innerHTML = buildGroupClassStatusBadgeHtml(gc.status);
+}
+
+// KPI ở STEP 11E CHỦ Ý chỉ hiển thị giá trị an toàn — KHÔNG query
+// group_class_enrollments/group_sessions/attendance/payments (đúng yêu cầu phạm vi). Các KPI
+// này sẽ được nối vào dữ liệu thật ở đúng STEP triển khai Enrollment/Session/Attendance.
+//
+// STEP 11F-B-FIX: gc-kpi-enrollment-count vẫn được reset về '0' ở đây MỖI LẦN mở Detail (giữ
+// nguyên hành vi placeholder-trước-khi-có-dữ-liệu — tránh hiển thị số liệu CŨ của lớp trước đó
+// trong khoảnh khắc trước khi refreshGroupClassOverviewEnrollmentCount() kịp chạy xong) — nhưng
+// renderGroupClassOverviewTab() (gọi ngay sau hàm này trong openGroupClassDetail()) sẽ cập nhật
+// lại giá trị THẬT ngay lập tức nếu đã có sẵn cache, hoặc sau 1 lần query nếu chưa có. Các KPI
+// khác (Tổng buổi/Hoàn thành/Tỷ lệ chuyên cần/Doanh thu) TIẾP TỤC là placeholder tĩnh, ngoài
+// phạm vi STEP này (mục X đề bài).
+function renderGroupClassDetailKpiPlaceholders() {
+    document.getElementById('gc-kpi-total-sessions').innerText = '0';
+    document.getElementById('gc-kpi-completed-sessions').innerText = '0';
+    document.getElementById('gc-kpi-enrollment-count').innerText = '0';
+    document.getElementById('gc-kpi-attendance-rate').innerText = 'Chưa có dữ liệu';
+    document.getElementById('gc-kpi-revenue').innerText = 'Chưa có dữ liệu';
+}
+
+function renderGroupClassOverviewTab(gc) {
+    var box = document.getElementById('gc-overview-info-box');
+    if (!box) return;
+    box.innerHTML =
+        '<div>Tên lớp: <strong style="color:var(--text-main);">' + escapeHtml(gc.name) + '</strong></div>' +
+        '<div style="margin-top:6px;">Môn học: <strong style="color:var(--text-main);">' + escapeHtml(gc.subject) + '</strong></div>' +
+        '<div style="margin-top:6px;">Trạng thái: ' + buildGroupClassStatusBadgeHtml(gc.status) + '</div>' +
+        '<div style="margin-top:6px;" id="gc-overview-si-so">Sĩ số: Đang tải...</div>' +
+        '<div style="margin-top:6px;">Buổi học: Chưa có buổi học</div>';
+
+    refreshGroupClassOverviewEnrollmentCount(gc.id);
+    refreshGroupClassOverviewAttendanceSummary(gc.id);
+}
+
+// ----------------------------------------------------------------------
+// STEP 11H-D — ATTENDANCE SUMMARY + KPI "Tỷ lệ chuyên cần" (#gc-kpi-attendance-rate)
+// ----------------------------------------------------------------------
+// Công thức (mục 3 đề bài): rate = (present + late) / (present + absent + excused + late), CHỈ
+// tính trên attendance ĐÃ tồn tại trong DB — session scheduled chưa điểm danh KHÔNG bị coi là
+// absent (mục 4/12), cancelled session bị loại khỏi mẫu số dù có anomaly attendance hay không
+// (mục 4/11 — không xoá DB, chỉ loại + log cảnh báo).
+//
+// Query strategy (mục 13): 1 query group_sessions (chỉ id + status) của activeGroupClassId +
+// 1 query attendance WHERE session_id IN (...) — KHÔNG N+1, KHÔNG query attendance của toàn bộ
+// tutor rồi lọc ở client (mục 6).
+//
+// KHÔNG cache riêng (groupClassAttendanceSummary) — mục 14 cho phép bỏ qua cache nếu không thực
+// sự cần: hàm này vốn đã được gọi lại mỗi lần renderGroupClassOverviewTab() chạy (mở Detail lần
+// đầu — mục 14 "class isolation") VÀ mỗi lần Attendance Save thành công (mục 15, xem
+// attendance.js gọi window.refreshGroupClassOverviewAttendanceSummary() — cùng pattern
+// enrollment.js gọi window.syncGroupClassOverviewEnrollmentCount()), nên không có tình huống nào
+// cần đọc lại một cache cũ thay vì query mới.
+async function refreshGroupClassOverviewAttendanceSummary(groupClassId) {
+    try {
+        var sessionsResult = await supabaseClient
+            .from('group_sessions')
+            .select('id, status')
+            .eq('group_class_id', groupClassId);
+
+        // Mục VI (cùng convention refreshGroupClassOverviewEnrollmentCount): chỉ áp dụng nếu vẫn
+        // còn đúng lớp lúc bắt đầu gọi — tránh leak summary của lớp A sang màn hình lớp B.
+        if (activeGroupClassId !== groupClassId) return;
+
+        if (sessionsResult.error) {
+            console.error('[GROUP CLASS OVERVIEW] Tải buổi học cho Attendance Summary FAILED:', sessionsResult.error);
+            applyAttendanceSummaryError(groupClassId);
+            return;
+        }
+
+        var sessions = sessionsResult.data || [];
+        if (sessions.length === 0) {
+            applyAttendanceSummaryEmpty(groupClassId);
+            return;
+        }
+
+        var cancelledSessionIds = {};
+        var sessionIds = sessions.map(function(s) {
+            if (s.status === 'cancelled') cancelledSessionIds[s.id] = true;
+            return s.id;
+        });
+
+        var attResult = await supabaseClient
+            .from('attendance')
+            .select('session_id, status')
+            .in('session_id', sessionIds);
+
+        if (activeGroupClassId !== groupClassId) return;
+
+        if (attResult.error) {
+            console.error('[GROUP CLASS OVERVIEW] Tải Attendance Summary FAILED:', attResult.error);
+            applyAttendanceSummaryError(groupClassId);
+            return;
+        }
+
+        var counts = { present: 0, absent: 0, excused: 0, late: 0 };
+        var anomalyCount = 0;
+        (attResult.data || []).forEach(function(row) {
+            if (cancelledSessionIds[row.session_id]) {
+                // Mục 4/11 đề bài: buổi học đã huỷ KHÔNG được có attendance — nếu vẫn có (anomaly),
+                // KHÔNG xoá/sửa DB ở đây, CHỈ loại khỏi Summary + log cảnh báo cho dev biết.
+                anomalyCount++;
+                return;
+            }
+            if (counts.hasOwnProperty(row.status)) counts[row.status]++;
+        });
+
+        if (anomalyCount > 0) {
+            console.warn('[GROUP CLASS OVERVIEW] ANOMALY: ' + anomalyCount + ' attendance record(s) thuộc buổi học đã HUỶ (cancelled) — đã loại khỏi Attendance Summary/KPI, KHÔNG xoá/sửa DB. group_class_id=' + groupClassId);
+        }
+
+        var totalMarked = counts.present + counts.absent + counts.excused + counts.late;
+        if (totalMarked === 0) {
+            // Mục 7 đề bài: phân biệt rõ "chưa có dữ liệu" với "0% attendance" — KHÔNG hiển thị 0%.
+            applyAttendanceSummaryEmpty(groupClassId);
+            return;
+        }
+
+        var rate = (counts.present + counts.late) / totalMarked;
+        applyAttendanceSummaryData(groupClassId, counts, totalMarked, rate);
+    } catch (err) {
+        console.error('[GROUP CLASS OVERVIEW] Attendance Summary EXCEPTION:', err);
+        applyAttendanceSummaryError(groupClassId);
+    }
+}
+
+function applyAttendanceSummaryEmpty(groupClassId) {
+    if (groupClassId !== activeGroupClassId) return;
+    var kpiEl = document.getElementById('gc-kpi-attendance-rate');
+    if (kpiEl) kpiEl.innerText = 'Chưa có dữ liệu';
+    var box = document.getElementById('gc-attendance-summary-box');
+    if (box) box.innerHTML = '<div style="color:var(--text-sub);">Chưa có dữ liệu điểm danh.</div>';
+}
+
+function applyAttendanceSummaryError(groupClassId) {
+    if (groupClassId !== activeGroupClassId) return;
+    // Mục 19 đề bài: lỗi query KHÔNG được âm thầm rơi về 0%/'Chưa có dữ liệu' như thành công —
+    // hiển thị rõ là lỗi tải, giữ đúng convention báo lỗi (màu đỏ) đã dùng ở các nơi khác trong
+    // Group Class Detail (session.js/enrollment.js/attendance.js).
+    var kpiEl = document.getElementById('gc-kpi-attendance-rate');
+    if (kpiEl) kpiEl.innerText = 'Chưa có dữ liệu';
+    var box = document.getElementById('gc-attendance-summary-box');
+    if (box) box.innerHTML = '<div style="color:#ef4444;">⚠️ Không tải được dữ liệu điểm danh.</div>';
+}
+
+// Formatter: reuse ĐÚNG convention percent hiện có của app (1-to-1 dashboard, index.html —
+// attendanceRate = Math.round(x * 1000) / 10, hiển thị 1 chữ số thập phân, VD "83.3%") — mục 18
+// đề bài "nếu có formatter percentage → reuse", KHÔNG tự bịa Math.round(x*100) (số nguyên) khác
+// convention đã có.
+function applyAttendanceSummaryData(groupClassId, counts, totalMarked, rate) {
+    if (groupClassId !== activeGroupClassId) return;
+    var ratePercent = Math.round(rate * 1000) / 10;
+    var percentText = ratePercent + '%';
+
+    var kpiEl = document.getElementById('gc-kpi-attendance-rate');
+    if (kpiEl) kpiEl.innerText = percentText;
+
+    var box = document.getElementById('gc-attendance-summary-box');
+    if (box) {
+        box.innerHTML =
+            '<div style="text-align:center; padding:2px 0 12px;">' +
+                '<div style="font-size:28px; font-weight:800; color:var(--text-main);">' + percentText + '</div>' +
+                '<div style="font-size:12px; color:var(--text-sub); margin-top:2px;">Tỷ lệ tham dự · ' + totalMarked + ' lượt điểm danh</div>' +
+            '</div>' +
+            '<div style="display:grid; grid-template-columns:1fr 1fr; gap:6px 16px; font-size:13px;">' +
+                '<div style="color:#10b981;">Có mặt</div><div style="text-align:right; font-weight:700; color:var(--text-main);">' + counts.present + '</div>' +
+                '<div style="color:#f59e0b;">Muộn</div><div style="text-align:right; font-weight:700; color:var(--text-main);">' + counts.late + '</div>' +
+                '<div style="color:#ef4444;">Vắng</div><div style="text-align:right; font-weight:700; color:var(--text-main);">' + counts.absent + '</div>' +
+                '<div style="color:#38bdf8;">Có phép</div><div style="text-align:right; font-weight:700; color:var(--text-main);">' + counts.excused + '</div>' +
+            '</div>';
+    }
+}
+
+// ----------------------------------------------------------------------
+// STEP 11F-B-FIX — SĨ SỐ = active enrollment count (mục III: source of truth DUY NHẤT là
+// group_class_enrollments WHERE group_class_id = activeGroupClassId AND status = 'active';
+// KHÔNG dùng students/classList/student_schedules/lessons).
+// ----------------------------------------------------------------------
+// Ưu tiên dùng cache đã có sẵn trong enrollment.js (window.getCachedActiveEnrollmentCount() —
+// KHÔNG query lại Supabase nếu cache đó đã đúng activeGroupClassId, mục IV "reuse dữ liệu hiện
+// tại nếu an toàn"). CHỈ query trực tiếp (window.getActiveEnrollmentCount(), live head-count, hàm
+// đã có sẵn từ STEP 11F-B) khi cache CHƯA có cho lớp này — ví dụ Detail vừa mở, tab "Học viên"
+// chưa từng được vào lần nào trong phiên hiện tại. Gọi qua window.* (KHÔNG import enrollment.js ở
+// đây — cùng lý do "tránh circular dependency" đã ghi ở đầu file/switchGroupClassTab()).
+async function refreshGroupClassOverviewEnrollmentCount(groupClassId) {
+    var cached = (typeof window.getCachedActiveEnrollmentCount === 'function')
+        ? window.getCachedActiveEnrollmentCount()
+        : null;
+
+    if (cached !== null) {
+        applyGroupClassOverviewEnrollmentCount(groupClassId, cached);
+        return;
+    }
+
+    if (typeof window.getActiveEnrollmentCount !== 'function') return;
+    var count = await window.getActiveEnrollmentCount();
+    // Mục VI: trong lúc query đang chạy, user có thể đã đóng Detail hoặc chuyển sang Group Class
+    // khác (activeGroupClassId đổi) — CHỈ áp dụng kết quả nếu vẫn còn đúng lớp lúc bắt đầu gọi,
+    // tránh leak số liệu của lớp A sang màn hình đang mở của lớp B.
+    if (activeGroupClassId !== groupClassId) return;
+    if (count === null) return; // lỗi mạng/Supabase — giữ nguyên "Đang tải...", KHÔNG hiển thị sai số liệu
+    applyGroupClassOverviewEnrollmentCount(groupClassId, count);
+}
+
+// Cập nhật DOM (KPI card + dòng Overview) — dùng chung bởi refreshGroupClassOverviewEnrollmentCount()
+// (initial/khi chưa có cache) VÀ syncGroupClassOverviewEnrollmentCount() (mục V, gọi từ
+// enrollment.js mỗi khi danh sách enrollment thay đổi: thêm existing/thêm mới/rời lớp).
+function applyGroupClassOverviewEnrollmentCount(groupClassId, count) {
+    if (groupClassId !== activeGroupClassId) return; // mục VI: không áp dụng nhầm lớp
+    var kpiEl = document.getElementById('gc-kpi-enrollment-count');
+    if (kpiEl) kpiEl.innerText = String(count);
+    var siSoEl = document.getElementById('gc-overview-si-so');
+    if (siSoEl) siSoEl.innerText = 'Sĩ số: ' + (count > 0 ? (count + ' học viên') : 'Chưa có học viên');
+}
+
+// Entry point GỌI TỪ enrollment.js (mục V: sync sau khi enroll/leave, KHÔNG reload toàn bộ trang)
+// — enrollment.js đã có sẵn count chính xác (gcEnrollmentListCache.length) ngay sau khi
+// loadEnrollments()/renderEnrollmentList() chạy xong nên gọi thẳng applyGroupClassOverviewEnrollmentCount(),
+// KHÔNG cần query lại (mục IV). window.syncGroupClassOverviewEnrollmentCount được gán ở cuối file
+// (cùng khối EXPOSE QUA WINDOW) — xem ở đó.
+function syncGroupClassOverviewEnrollmentCount(groupClassId, count) {
+    applyGroupClassOverviewEnrollmentCount(groupClassId, count);
+}
+
+// Copy nguyên logic switchStudentProfileTab() (STEP 11E-A mục 4/6) — đổi danh sách tab. 3 tab
+// students/sessions/attendance chỉ toggle display, nội dung bên trong là placeholder tĩnh đã có
+// sẵn trong HTML (KHÔNG render/query gì thêm khi chuyển sang các tab này).
+function switchGroupClassTab(tab) {
+    gcCurrentTab = tab;
+    document.querySelectorAll('#group-class-detail-view .sp-tab-btn').forEach(function(b) {
+        b.classList.toggle('active', b.getAttribute('data-sp-tab') === tab);
+    });
+    ['overview', 'students', 'sessions', 'attendance'].forEach(function(t) {
+        var panel = document.getElementById('gc-tab-' + t);
+        if (panel) panel.style.display = (t === tab) ? 'block' : 'none';
+    });
+
+    // STEP 11F-B — tab "Học viên" giờ có nội dung thật (Enrollment), khác "sessions"/"attendance"
+    // vẫn còn là placeholder tĩnh (ngoài phạm vi STEP này). Gọi qua window.* (KHÔNG import
+    // js/group-class/enrollment.js ở đây — xem comment "tránh circular dependency" trong
+    // index.html tại vị trí nạp enrollment.js). typeof-check để group-class.js không vỡ nếu
+    // enrollment.js lỗi tải/chưa nạp kịp vì lý do nào đó.
+    // STEP 11H-D: reset tab "Học viên" về VIEW 1 (danh sách) TRƯỚC KHI load lại — tránh hiển thị
+    // lại Group Class Student Detail của 1 học sinh đã mở TRƯỚC KHI người dùng rời tab "Học viên"
+    // (ví dụ mở chi tiết học sinh A, chuyển sang tab "Buổi học", quay lại "Học viên": phải thấy lại
+    // danh sách, KHÔNG phải chi tiết học sinh A còn treo trên màn hình) — cùng nguyên tắc
+    // loadGroupClassAttendanceIfNeeded() (attendance.js) tự reset về VIEW 1 mỗi lần vào tab. Gọi
+    // qua window.* (KHÔNG import js/group-class/student-detail.js ở đây — cùng lý do "tránh
+    // circular dependency" đã áp dụng cho enrollment.js/session.js/schedule.js/generator.js/
+    // attendance.js ở trên). typeof-check để group-class.js không vỡ nếu student-detail.js lỗi
+    // tải/chưa nạp kịp vì lý do nào đó.
+    if (tab === 'students' && typeof window.resetGroupClassStudentDetailView === 'function') {
+        window.resetGroupClassStudentDetailView();
+    }
+
+    if (tab === 'students' && typeof window.loadEnrollmentsIfNeeded === 'function') {
+        window.loadEnrollmentsIfNeeded();
+    }
+
+    // STEP 11G-B — tab "Buổi học" giờ có nội dung thật (Group Session List + Create), khác
+    // "attendance" vẫn còn là placeholder tĩnh (ngoài phạm vi STEP này). Gọi qua window.* (KHÔNG
+    // import js/group-class/session.js ở đây — cùng lý do "tránh circular dependency" đã áp dụng
+    // cho enrollment.js ở trên). typeof-check để group-class.js không vỡ nếu session.js lỗi
+    // tải/chưa nạp kịp vì lý do nào đó.
+    if (tab === 'sessions' && typeof window.loadGroupSessionsIfNeeded === 'function') {
+        window.loadGroupSessionsIfNeeded();
+    }
+
+    // STEP 11G-B2-A — tab "Buổi học" giờ CÒN hiển thị thêm khối "Lịch học hàng tuần"
+    // (public.group_class_schedules, xem js/group-class/schedule.js) NGAY TRÊN danh sách buổi
+    // học đã có từ STEP 11G-B. Gọi qua window.* (KHÔNG import js/group-class/schedule.js ở đây —
+    // cùng lý do "tránh circular dependency" đã áp dụng cho enrollment.js/session.js ở trên).
+    // typeof-check để group-class.js không vỡ nếu schedule.js lỗi tải/chưa nạp kịp vì lý do nào đó.
+    if (tab === 'sessions' && typeof window.loadGroupClassSchedulesIfNeeded === 'function') {
+        window.loadGroupClassSchedulesIfNeeded();
+    }
+
+    // STEP 11G-C2-B — tab "Buổi học" giờ CÒN tự động chạy Group Session Generator (12-week
+    // rolling window, xem js/group-class/generator.js) để đảm bảo group_sessions 'regular' của
+    // các lịch học hàng tuần đang active đã được materialized trước khi Calendar/danh sách cần
+    // đọc tới. Gọi qua window.* (KHÔNG import js/group-class/generator.js ở đây — cùng lý do
+    // "tránh circular dependency" đã áp dụng cho enrollment.js/session.js/schedule.js ở trên).
+    // typeof-check để group-class.js không vỡ nếu generator.js lỗi tải/chưa nạp kịp vì lý do nào
+    // đó. KHÔNG await (giữ nguyên switchGroupClassTab() là hàm sync như trước, không chặn UI) —
+    // Generator tự re-check activeGroupClassId/gcCurrentTab TRƯỚC KHI query (bên trong
+    // generator.js) và ở đây TRƯỚC KHI refresh UI, nên không có rủi ro áp kết quả của 1 lớp/tab
+    // khác đã chuyển sang trong lúc chờ mạng.
+    if (tab === 'sessions' && typeof window.runGroupSessionGeneratorIfNeeded === 'function') {
+        window.runGroupSessionGeneratorIfNeeded().then(function(result) {
+            if (!result) return;
+            if (result.status === 'error') {
+                console.error('[GROUP SESSION GENERATOR] Auto-run FAILED:', result.error);
+                if (typeof window.showToast === 'function') {
+                    window.showToast('⚠️', 'Không thể tự động tạo buổi học', result.error || 'Lỗi không xác định.');
+                }
+                return;
+            }
+            // Chỉ refresh lại danh sách buổi học (session.js) nếu THỰC SỰ có session mới được tạo
+            // VÀ người dùng vẫn đang đứng ở đúng lớp + đúng tab lúc Generator chạy xong (tránh ghi
+            // đè UI của 1 lớp/tab khác họ đã chuyển sang trong lúc chờ mạng, cùng nguyên tắc
+            // "chỉ áp dụng kết quả nếu vẫn còn đúng context" của enrollment.js).
+            if (result.insertedCount > 0 && activeGroupClassId === result.groupClassId && gcCurrentTab === 'sessions' && typeof window.loadGroupSessions === 'function') {
+                window.loadGroupSessions();
+            }
+        });
+    }
+
+    // STEP 11H-B — tab "Điểm danh" giờ có nội dung thật (xem js/group-class/attendance.js). Gọi
+    // qua window.* (KHÔNG import js/group-class/attendance.js ở đây — cùng lý do "tránh circular
+    // dependency" đã áp dụng cho enrollment.js/session.js/schedule.js/generator.js ở trên).
+    // typeof-check để group-class.js không vỡ nếu attendance.js lỗi tải/chưa nạp kịp vì lý do nào
+    // đó.
+    if (tab === 'attendance' && typeof window.loadGroupClassAttendanceIfNeeded === 'function') {
+        window.loadGroupClassAttendanceIfNeeded();
+    }
+}
+
+// ============================================================================
+// EXPOSE TỐI THIỂU QUA WINDOW (cùng convention students.js mục "HTML COMPATIBILITY") — chỉ
+// export những hàm được gọi trực tiếp từ onclick/onchange/oninput trong HTML hoặc từ
+// switchTutorPage() trong script chính.
+// ============================================================================
+export {
+    loadGroupClassesIfNeeded, loadGroupClasses, renderGroupClassList,
+    applyGroupClassFilters, renderGroupClassFilterOptions,
+    onGroupClassSearchInput, onGroupClassFilterChange,
+    addNewGroupClass,
+    openEditGroupClass, openEditGroupClassFromDetail, closeEditGroupClass, saveEditGroupClass,
+    openGroupClassDetail, closeGroupClassDetail, switchGroupClassTab,
+    syncGroupClassOverviewEnrollmentCount, refreshGroupClassOverviewAttendanceSummary
+};
+
+window.loadGroupClassesIfNeeded = loadGroupClassesIfNeeded;
+window.onGroupClassSearchInput = onGroupClassSearchInput;
+window.onGroupClassFilterChange = onGroupClassFilterChange;
+window.addNewGroupClass = addNewGroupClass;
+window.openEditGroupClass = openEditGroupClass;
+window.openEditGroupClassFromDetail = openEditGroupClassFromDetail;
+window.closeEditGroupClass = closeEditGroupClass;
+window.saveEditGroupClass = saveEditGroupClass;
+window.openGroupClassDetail = openGroupClassDetail;
+window.closeGroupClassDetail = closeGroupClassDetail;
+window.switchGroupClassTab = switchGroupClassTab;
+// STEP 11F-B-FIX — gọi từ js/group-class/enrollment.js (mục V), KHÔNG phải từ HTML onclick.
+window.syncGroupClassOverviewEnrollmentCount = syncGroupClassOverviewEnrollmentCount;
+// STEP 11H-D — gọi từ js/group-class/attendance.js sau khi Save thành công (mục 15), KHÔNG phải
+// từ HTML onclick, cùng lý do syncGroupClassOverviewEnrollmentCount ở trên.
+window.refreshGroupClassOverviewAttendanceSummary = refreshGroupClassOverviewAttendanceSummary;
