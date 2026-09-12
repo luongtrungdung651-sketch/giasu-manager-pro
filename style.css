@@ -334,6 +334,9 @@
         .tw-status-pill { font-size: 11.5px; font-weight: 700; white-space: nowrap; }
         .tw-view-btn { background: none; border: 1.5px solid var(--border-color); color: var(--text-main); cursor: pointer; font-size: 12px; font-weight: 600; padding: 7px 12px; border-radius: 7px; font-family: 'Inter', sans-serif; transition: all .15s; white-space: nowrap; }
         .tw-view-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .tw-report-btn { background: var(--accent-dim); border: 1.5px solid var(--accent); color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 7px; font-family: 'Inter', sans-serif; transition: all .15s; white-space: nowrap; }
+        .tw-report-btn:hover { background: var(--accent); color: #fff; }
+        .tw-report-btn-submitted { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.45); color: #10b981; }
         @media (max-width: 640px) {
             .tw-card { flex-direction: column; align-items: stretch; }
             .tw-card-main { flex-direction: column; align-items: flex-start; gap: 4px; }
@@ -359,7 +362,7 @@
             }
             .tw-card-side { align-items: stretch; width: 100%; }
             .tw-card-side-btns { width: 100%; flex-wrap: wrap; }
-            .tw-view-btn, .tw-complete-btn, .tw-journal-btn {
+            .tw-view-btn, .tw-complete-btn, .tw-report-btn {
                 flex: 1 1 auto; min-width: 100px; text-align: center; white-space: normal; min-height: 40px;
             }
         }
@@ -617,23 +620,6 @@
         .tw-mini-cal-dots span { width: 3.5px; height: 3.5px; border-radius: 50%; background: #38bdf8; }
         .tw-mini-cal-cell.tw-mc-today .tw-mini-cal-dots span { background: #04241c; }
 
-        /* ===== ACTION CENTER V1 ("Cần xử lý" — đầu trang Hôm nay) — tái sử dụng token màu/spacing
-           đã có (var(--bg-card-sub), var(--border-color), var(--accent)...), KHÔNG tạo design system
-           riêng. Dải màu bên trái (.ac-card, border-left) là "priority indicator" theo mục 4. ===== */
-        .ac-section { margin-bottom: 18px; }
-        .ac-list { display: flex; flex-direction: column; gap: 10px; }
-        .ac-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--bg-card-sub); border: 1.5px solid var(--border-color); border-left: 4px solid var(--accent); border-radius: 10px; padding: 12px 14px; flex-wrap: wrap; }
-        .ac-card-body { flex: 1 1 220px; min-width: 0; }
-        .ac-card-title { font-size: 13px; font-weight: 700; color: var(--text-main); margin-bottom: 3px; }
-        .ac-card-line { font-size: 12px; color: var(--text-sub); line-height: 1.5; }
-        .ac-card-line strong { color: var(--text-main); }
-        .ac-card-btn { flex-shrink: 0; background: var(--bg-card); border: 1.5px solid var(--border-color); color: var(--text-main); cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 14px; border-radius: 8px; font-family: 'Inter', sans-serif; transition: all .15s; white-space: nowrap; min-height: 38px; }
-        .ac-card-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-        @media (max-width: 640px) {
-            .ac-card { flex-direction: column; align-items: stretch; }
-            .ac-card-btn { width: 100%; text-align: center; min-height: 44px; }
-        }
-
         /* ===== TODAY TIMELINE (nâng cấp trực quan cho #tw-today-list) ===== */
         .tw-summary-banner { background: var(--bg-card-sub); border: 1.5px solid var(--border-color); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; }
         .tw-summary-title { font-size: 14px; font-weight: 700; color: var(--text-main); margin-bottom: 3px; }
@@ -659,8 +645,6 @@
         .tw-complete-btn { background: rgba(16,185,129,0.12); border: 1.5px solid rgba(16,185,129,0.4); color: #10b981; cursor: pointer; font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 7px; font-family: 'Inter', sans-serif; transition: all .15s; white-space: nowrap; }
         .tw-complete-btn:hover { background: rgba(16,185,129,0.22); }
         .tw-complete-btn:disabled { opacity: 0.5; cursor: default; }
-        .tw-journal-btn { background: rgba(245,158,11,0.12); border: 1.5px solid rgba(245,158,11,0.4); cursor: pointer; font-size: 12px; font-weight: 700; padding: 7px 12px; border-radius: 7px; font-family: 'Inter', sans-serif; transition: all .15s; white-space: nowrap; }
-        .tw-journal-btn:hover { background: rgba(245,158,11,0.22); }
 
         /* ===== LỊCH DẠY (calendar theo tháng) ===== */
         .tp-cal-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -745,6 +729,38 @@
         .sp-tab-btn { flex-shrink: 0; padding: 9px 14px; font-size: 12.5px; font-weight: 700; color: var(--text-sub); background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-family: 'Inter', sans-serif; transition: color .15s, border-color .15s; white-space: nowrap; }
         .sp-tab-btn:hover { color: var(--text-main); }
         .sp-tab-btn.active { color: #00cca3; border-bottom-color: #00cca3; }
+        .sp-session-reports-list { display: flex; flex-direction: column; gap: 8px; }
+        .sp-session-report-card { display: block; width: 100%; padding: 12px 14px; text-align: left; color: var(--text-main); background: var(--bg-card-sub); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; font-family: 'Inter', sans-serif; transition: border-color .15s, background .15s; }
+        .sp-session-report-card:hover { border-color: var(--accent); background: var(--accent-soft); }
+        .sp-session-report-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .sp-session-report-date { font-size: 13px; font-weight: 700; }
+        .sp-session-report-status { padding: 3px 7px; border-radius: 5px; font-size: 11px; font-weight: 700; }
+        .sp-session-report-status.is-draft { color: #d97706; background: rgba(245,158,11,.12); }
+        .sp-session-report-status.is-submitted { color: #059669; background: rgba(16,185,129,.12); }
+        .sp-session-report-context { margin-top: 5px; color: var(--text-sub); font-size: 12px; font-weight: 600; }
+        .sp-session-report-preview { margin-top: 4px; color: var(--text-sub); font-size: 13px; line-height: 1.45; }
+        .sp-empty-state { padding: 18px 12px; border: 1px dashed var(--border-color); border-radius: 8px; color: var(--text-sub); font-size: 13px; text-align: center; }
+        .wr-card { margin-top: 16px; }
+        .wr-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+        .wr-controls input[type="date"] { margin: 0; width: auto; }
+        .wr-meta-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .wr-meta-item { flex: 1; min-width: 120px; background: var(--bg-card-sub); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; }
+        .wr-meta-item .lbl { font-size: 10px; font-weight: 700; letter-spacing: .4px; color: var(--text-sub); text-transform: uppercase; margin-bottom: 4px; }
+        .wr-meta-item .val { font-size: 15px; font-weight: 800; color: var(--text-main); }
+        .wr-session-block { border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: var(--bg-card-sub); }
+        .wr-session-block .wr-session-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; font-weight: 700; font-size: 13px; }
+        .wr-session-field { font-size: 12.5px; color: var(--text-sub); margin-top: 4px; line-height: 1.45; }
+        .wr-session-field strong { color: var(--text-main); }
+        .wr-summary-block { margin: 4px 0 16px; }
+        .wr-summary-section { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; background: var(--bg-card-sub); }
+        .wr-summary-title { font-weight: 700; font-size: 13px; color: var(--text-main); margin-bottom: 6px; }
+        .wr-summary-text { font-size: 12.5px; color: var(--text-sub); line-height: 1.45; }
+        .wr-summary-empty { font-size: 12px; color: var(--text-sub); font-style: italic; }
+        .wr-bullet-list { margin: 0; padding-left: 18px; }
+        .wr-bullet-list li { font-size: 12.5px; color: var(--text-sub); margin-bottom: 4px; line-height: 1.45; }
+        .wr-bullet-date { font-size: 11px; color: var(--text-sub); font-weight: 700; margin-right: 4px; }
+        .wr-tally-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .wr-tally-chip { background: var(--bg-card-sub); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 700; }
 
         .sp-section-title { font-size: 13.5px; font-weight: 700; color: var(--text-main); margin: 0 0 10px; }
         .sp-card-mini { background: var(--bg-card-sub); border: 1.5px solid var(--border-color); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
@@ -767,14 +783,7 @@
         .sp-timeline-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
         .sp-timeline-subject { font-size: 13px; font-weight: 700; color: var(--text-main); }
         .sp-timeline-time { font-size: 12px; color: var(--text-sub); }
-        .sp-timeline-journal-line { font-size: 12px; color: var(--text-sub); margin-top: 4px; line-height: 1.5; }
-        .sp-timeline-journal-line strong { color: var(--text-main); }
         .sp-timeline-actions { margin-top: 8px; }
-
-        .sp-journal-item { background: var(--bg-card-sub); border: 1.5px solid var(--border-color); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
-        .sp-journal-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-        .sp-journal-field { font-size: 12px; color: var(--text-sub); margin-top: 4px; line-height: 1.5; }
-        .sp-journal-field strong { color: var(--text-main); }
 
         .sp-progress-stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
         @media (max-width: 700px) { .sp-progress-stats-row { grid-template-columns: repeat(2, 1fr); } }
@@ -1030,10 +1039,6 @@
         .gc-schedule-modal-box .modal-footer { flex-shrink: 0; }
         .ld-label { display:block; font-size:11px; font-weight:700; color:var(--text-sub); text-transform:uppercase; letter-spacing:.3px; margin-bottom:4px; }
         .ld-value { font-size:14px; font-weight:600; color:var(--text-main); }
-        .ld-journal-block { margin-top:12px; }
-        .ld-journal-block:first-child { margin-top:8px; }
-        .ld-journal-view-box { white-space:pre-wrap; font-size:13px; line-height:1.6; margin-top:4px; padding:10px 12px; background:var(--bg-card-sub); border:1px solid var(--border-color); border-radius:8px; min-height:36px; color:var(--text-main); }
-        .ld-journal-textarea { width:100%; min-height:90px; margin-top:4px; padding:10px 12px; font-family:'Inter',sans-serif; font-size:13px; line-height:1.6; background:var(--bg-card-sub); border:1px solid var(--border-color); border-radius:8px; color:var(--text-main); resize:vertical; box-sizing:border-box; }
 
         /* ===== MODULE SEARCH + FILTER (chỉ UI, không đụng dữ liệu) ===== */
         .search-filter-bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
@@ -1106,3 +1111,80 @@
         .social-info-modal { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; display:none; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
         .social-info-modal.open { display:flex; }
         .social-info-box { background:var(--bg-card); border:1px solid var(--border-color); border-radius:14px; max-width:460px; width:100%; padding:32px; box-shadow:var(--shadow-lg); }
+        .session-report-modal-box { max-width: 720px; }
+        .session-report-modal-box .modal-header { padding: 14px 20px; }
+        .session-report-modal-box .modal-header h3 { font-size: 15px; }
+        @media (min-width: 641px) {
+            /* Desktop @ 100% zoom: the modal card itself is capped to the viewport height and
+               clips to its rounded corners (overflow:hidden on the OUTER card only — that's
+               layout clipping, not the scroll mechanism). Scrolling is provided by
+               overflow-y:auto on .session-report-form (the actual <form>, flex:1 1 auto,
+               min-height:0) — when the 7 fields + any manually-resized textarea exceed the
+               available height, THIS is what scrolls via mouse wheel/trackpad. Header and
+               footer are flex-shrink:0 so they stay fixed in place while only the form area
+               scrolls. overflow-x is clamped to hidden so a wide field can never cause a
+               horizontal scrollbar. */
+            .session-report-modal-box {
+                max-height: calc(100vh - 32px);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+            .session-report-modal-box .modal-header { flex-shrink: 0; }
+            .session-report-form {
+                flex: 1 1 auto;
+                overflow-y: auto;
+                overflow-x: hidden;
+                min-height: 0;
+                -webkit-overflow-scrolling: touch;
+            }
+            .session-report-actions { flex-shrink: 0; }
+        }
+        .session-report-context { margin-top: 2px; color: var(--text-sub); font-size: 11.5px; font-weight: 500; }
+        .session-report-form { gap: 8px; padding: 14px 20px 16px; box-sizing: border-box; }
+        .session-report-fields-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; min-width: 0; }
+        .session-report-field-full { grid-column: 1 / -1; }
+        .session-report-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+        .session-report-field label { color: var(--text-main); font-size: 12px; font-weight: 600; line-height: 1.2; }
+        .session-report-field label span { color: #ef4444; }
+        .session-report-field textarea,
+        .session-report-field select { margin: 0; font-size: 12.5px; padding: 6px 8px; box-sizing: border-box; max-width: 100%; }
+        .session-report-field textarea { min-height: 34px; resize: vertical; line-height: 1.35; }
+        .session-report-field-full textarea { min-height: 42px; }
+        .session-report-error { padding: 7px 10px; border: 1px solid rgba(239,68,68,0.35); border-radius: 7px; background: rgba(239,68,68,0.08); color: #ef4444; font-size: 11.5px; font-weight: 600; }
+        .session-report-actions { gap: 8px; padding: 10px 20px; }
+        .session-report-actions .btn-secondary,
+        .session-report-actions .btn-primary { min-height: 32px; padding: 7px 13px; font-size: 12.5px; font-weight: 600; }
+        .session-report-actions .btn-secondary { margin-left: auto; }
+        .session-report-actions button:disabled { opacity: 0.6; cursor: default; }
+        @media (max-width: 700px) {
+            .session-report-fields-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 640px) {
+            /* Mobile: the generic bottom-sheet modal rules above (line ~481) already make
+               .modal-box a 92dvh flex column with .modal-body (== .session-report-form) as the
+               sole scrolling region, so the form scrolls naturally with normal touch gestures —
+               we only need to relax textarea heights here for comfortable typing. */
+            .session-report-field textarea { min-height: 70px; }
+            .session-report-field-full textarea { min-height: 70px; }
+        }
+
+/* ===== "Lịch học cố định" collapse/expand (Student Profile) =====
+   Chỉ là UI ẩn/hiện thuần túy — KHÔNG liên quan đến dữ liệu/logic lịch học bên trong.
+   Mặc định ẩn (.sched-collapse-panel không có .is-open => display:none). Khi mở, JS thêm
+   class "is-open" (hiện) + "sched-anim-in" (chạy animation nhẹ 1 lần rồi thôi). */
+.sched-collapse-panel { display: none; }
+.sched-collapse-panel.is-open { display: block; }
+@keyframes schedCollapseFadeSlideIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.sched-collapse-panel.sched-anim-in { animation: schedCollapseFadeSlideIn .18s ease-out; }
+#sched-toggle-btn[aria-expanded="true"] { background: rgba(56,189,248,0.12); border-color: #38bdf8; color: #38bdf8; }
+
+/* ===== "Kho dữ liệu & Tài liệu giảng dạy" collapse/expand (Student Profile) — cùng cơ chế với
+   panel Lịch học cố định ở trên, tách class riêng để không ảnh hưởng panel kia. */
+.docs-collapse-panel { display: none; }
+.docs-collapse-panel.is-open { display: block; }
+.docs-collapse-panel.docs-anim-in { animation: schedCollapseFadeSlideIn .18s ease-out; }
+#docs-toggle-btn[aria-expanded="true"] { background: rgba(74,222,128,0.12); border-color: #4ade80; color: #4ade80; }

@@ -245,16 +245,90 @@ async function removeClass(id, btnEl) {
 // ----------------------------------------------------------------------
 // DANH SÁCH / SEARCH / FILTER
 // ----------------------------------------------------------------------
-// Hiển thị lịch học: nếu có nhiều ngày kèm giờ riêng (c.startTimes) thì hiện đủ từng cặp ngày-giờ,
-// nếu không thì giữ nguyên định dạng cũ (days chung 1 startTime) để không ảnh hưởng dữ liệu local hiện có.
+// Hiển thị lịch học: CHỈ thay đổi cách build chuỗi hiển thị (không đụng vào c.days/c.startTimes/
+// c.startTime/c.day — dữ liệu state giữ nguyên 100%). Quy tắc hiển thị:
+//   - Các thứ có CÙNG GIỜ được gom vào 1 nhóm.
+//   - Trong 1 nhóm, nếu các thứ liên tiếp (theo thứ tự Thứ 2 → Chủ Nhật) thì rút gọn thành
+//     "Thứ X–Thứ Y"; nếu không liên tiếp thì liệt kê bằng dấu phẩy "Thứ A, Thứ B".
+//   - Nhiều nhóm giờ khác nhau được nối bằng " · ", sắp theo thứ xuất hiện sớm nhất trong tuần.
+//   - Giờ luôn bỏ phần giây (HH:MM:SS -> HH:MM).
+//   - Vẫn nhận diện được cả 2 format dữ liệu cũ/mới (c.days+c.startTimes song song, hoặc
+//     c.days+c.startTime chung, hoặc c.day+c.startTime đơn lẻ) để backward-compatible.
+var SCHEDULE_DAY_ORDER = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ Nhật'];
+
+function scheduleDayIndex(d) {
+    var i = SCHEDULE_DAY_ORDER.indexOf(d);
+    return i === -1 ? SCHEDULE_DAY_ORDER.length : i; // ngày lạ/không xác định bị đẩy xuống cuối, không loại bỏ
+}
+
+// "14:30:00" -> "14:30". Giữ nguyên giá trị nếu không đúng định dạng HH:MM:SS (an toàn với dữ liệu lạ).
+function scheduleFormatTime(t) {
+    if (typeof t === 'string' && /^\d{1,2}:\d{2}:\d{2}$/.test(t)) { return t.slice(0, t.indexOf(':', t.indexOf(':') + 1)); }
+    return t || '';
+}
+
+// Gom 1 danh sách thứ (đã cùng 1 khung giờ) thành chuỗi rút gọn, ví dụ:
+// ['Thứ 4','Thứ 5','Thứ 6','Thứ 7'] -> "Thứ 4–Thứ 7"; ['Thứ 2','Thứ 4','Thứ 6'] -> "Thứ 2, Thứ 4, Thứ 6"
+// Lưu ý: chỉ gộp thành "A–B" khi có TỪ 3 NGÀY LIÊN TIẾP trở lên; đúng 2 ngày liên tiếp vẫn hiển thị
+// dấu phẩy "A, B" (khớp với ví dụ mẫu: "Thứ 6, Thứ 7" thay vì "Thứ 6–Thứ 7").
+function scheduleFormatDayGroup(days) {
+    var uniqueSorted = [];
+    days.forEach(function(d) { if (uniqueSorted.indexOf(d) === -1) uniqueSorted.push(d); });
+    uniqueSorted.sort(function(a, b) { return scheduleDayIndex(a) - scheduleDayIndex(b); });
+
+    var parts = [];
+    var i = 0;
+    while (i < uniqueSorted.length) {
+        var j = i;
+        while (j + 1 < uniqueSorted.length && scheduleDayIndex(uniqueSorted[j + 1]) === scheduleDayIndex(uniqueSorted[j]) + 1) {
+            j++;
+        }
+        if (j - i >= 2) {
+            parts.push(uniqueSorted[i] + '–' + uniqueSorted[j]); // chuỗi liên tiếp >= 3 ngày -> rút gọn
+        } else {
+            for (var k = i; k <= j; k++) parts.push(uniqueSorted[k]); // 1-2 ngày -> liệt kê từng ngày
+        }
+        i = j + 1;
+    }
+    return parts.join(', ');
+}
+
+// Nhận vào danh sách cặp {day, time} (đã tách rời khỏi state, chỉ dùng để build chuỗi hiển thị)
+// rồi gom theo giờ và trả về chuỗi cuối cùng.
+function scheduleBuildFromPairs(pairs) {
+    var groups = []; // [{ time: 'HH:MM', days: [...] }]
+    pairs.forEach(function(p) {
+        if (!p || !p.day) return;
+        var t = scheduleFormatTime(p.time);
+        var g = null;
+        for (var k = 0; k < groups.length; k++) { if (groups[k].time === t) { g = groups[k]; break; } }
+        if (!g) { g = { time: t, days: [] }; groups.push(g); }
+        if (g.days.indexOf(p.day) === -1) g.days.push(p.day);
+    });
+
+    groups.sort(function(a, b) {
+        var minA = Math.min.apply(null, a.days.map(scheduleDayIndex));
+        var minB = Math.min.apply(null, b.days.map(scheduleDayIndex));
+        return minA - minB;
+    });
+
+    return groups.map(function(g) {
+        var dayPart = scheduleFormatDayGroup(g.days);
+        return g.time ? (dayPart + ' lúc ' + g.time) : dayPart;
+    }).join(' · ');
+}
+
 function buildScheduleDisplay(c) {
     if (Array.isArray(c.days) && Array.isArray(c.startTimes) && c.startTimes.length === c.days.length && c.startTimes.length > 0) {
-        return c.days.map(function(d, i) { return d + ' lúc ' + c.startTimes[i]; }).join(' · ');
+        return scheduleBuildFromPairs(c.days.map(function(d, i) { return { day: d, time: c.startTimes[i] }; }));
     }
     if (Array.isArray(c.days) && c.days.length) {
-        return c.days.join(', ') + (c.startTime ? ' (' + c.startTime + ')' : '');
+        return scheduleBuildFromPairs(c.days.map(function(d) { return { day: d, time: c.startTime }; }));
     }
-    return (c.day || '') + (c.startTime ? ' (' + c.startTime + ')' : '');
+    if (c.day) {
+        return scheduleBuildFromPairs([{ day: c.day, time: c.startTime }]);
+    }
+    return '';
 }
 
 // Trạng thái học phí hiển thị ở thẻ lớp học / bảng tài chính: học sinh Supabase (_supabaseSource)

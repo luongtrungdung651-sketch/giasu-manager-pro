@@ -21,7 +21,7 @@
 //     helper dùng chung, KHÔNG riêng của Calendar (getDayOfWeekNumber chỉ đang được
 //     Calendar gọi nhưng vẫn để nguyên tại chỗ cũ — không bắt buộc phải di chuyển).
 //   - loadStudentLessons / findLessonForDate / setLessonStatusForDate /
-//     removeLessonForDate / openLessonDetailModal / parseLessonJournal: thuộc
+//     removeLessonForDate / openLessonDetailModal: thuộc
 //     js/lessons/lessons.js (STEP 7D) — Calendar chỉ GỌI, không sở hữu.
 //   - rebuildAttendanceBridgeFromLessons / refreshMonthMoneyDisplay / loadStudentPayments /
 //     refreshStudentProfileExtras: thuộc Student Profile / Finance — Calendar chỉ gọi để
@@ -54,7 +54,7 @@
 // rebuildAttendanceBridgeFromLessons, refreshMonthMoneyDisplay, loadStudentPayments,
 // refreshFeeStatusUI, renderPaymentHistory, refreshStudentProfileExtras) và từ
 // js/lessons/lessons.js (loadStudentLessons, findLessonForDate, setLessonStatusForDate,
-// removeLessonForDate, openLessonDetailModal, parseLessonJournal) cùng js/core/utils.js
+// removeLessonForDate, openLessonDetailModal) cùng js/core/utils.js
 // (escapeHtml, getLocalIsoDate, timeToFloat — đã expose qua window ở STEP 7B). Module này
 // KHÔNG import những thứ đó — module chạy SAU khi script chính VÀ các module trước
 // (core/students/lessons) đã chạy xong, nên tại thời điểm các hàm bên dưới THỰC SỰ được
@@ -68,7 +68,7 @@
 // "STEP 8C — ĐĂNG KÝ LẮNG NGHE" phía dưới) — Lessons không còn giữ tên hàm
 // renderAttendanceGrid trong code nữa. Cạnh còn lại là dependency MỘT CHIỀU: Calendar
 // gọi các hàm business logic của Lessons (loadStudentLessons/findLessonForDate/
-// setLessonStatusForDate/removeLessonForDate/openLessonDetailModal/parseLessonJournal) để
+// setLessonStatusForDate/removeLessonForDate/openLessonDetailModal) để
 // đọc/mutate dữ liệu — index.html/Students/Lessons/Finance/Reports KHÔNG import Calendar,
 // chỉ gọi hàm Calendar qua window (giống onclick="..." gọi hàm global). Không còn circular
 // dependency giữa Calendar và Lessons.
@@ -655,22 +655,6 @@ function renderTpCalendar() {
                 dotRow.appendChild(dot);
             });
             cell.appendChild(dotRow);
-
-            // Mục 13: indicator nhật ký cho các buổi ĐÃ HOÀN THÀNH — 📝 nếu tất cả buổi completed
-            // trong ngày đã có nhật ký, ⚠️ nếu còn ít nhất 1 buổi completed chưa ghi. Không đụng
-            // schema/database, chỉ đọc lessons.notes đã có qua parseLessonJournal().
-            var completedItems = items.filter(function(i) { return i.status === 'completed'; });
-            if (completedItems.length > 0) {
-                var missingJournal = completedItems.some(function(i) {
-                    var j = parseLessonJournal(i.lesson ? i.lesson.notes : '');
-                    return !(j.content || j.feedback || j.homework);
-                });
-                var journalIndicator = document.createElement('div');
-                journalIndicator.style.cssText = 'font-size:11px; margin-top:2px;';
-                journalIndicator.title = missingJournal ? 'Có buổi đã dạy nhưng chưa ghi nhật ký' : 'Đã ghi nhật ký đầy đủ';
-                journalIndicator.innerText = missingJournal ? '⚠️' : '📝';
-                cell.appendChild(journalIndicator);
-            }
         }
 
         cell.addEventListener('click', function() {

@@ -64,6 +64,7 @@ var gcAttendanceOpenSession = null;
 // dedupeEligibleByStudentId()) và draft trạng thái đang chỉnh (CHƯA lưu DB cho tới khi bấm Lưu).
 var gcAttendanceEligibleCache = [];
 var gcAttendanceDraftByStudentId = {};
+var gcAttendanceReportByStudentId = {};
 
 // Guard chống double-submit khi Lưu — cùng pattern addEnrollmentInFlight (enrollment.js),
 // addGroupSessionInFlight (session.js).
@@ -343,6 +344,17 @@ async function loadAttendanceDetailData() {
 
         gcAttendanceEligibleCache = dedupeEligibleByStudentId(enrResult.data || []);
         gcAttendanceDraftByStudentId = {};
+        gcAttendanceReportByStudentId = {};
+        if (typeof window.getSessionReportsByGroupSession === 'function') {
+            var reportResult = await window.getSessionReportsByGroupSession(session.id);
+            if (!reportResult.error) {
+                (reportResult.data || []).forEach(function(report) {
+                    if (!gcAttendanceReportByStudentId[report.student_id]) {
+                        gcAttendanceReportByStudentId[report.student_id] = report;
+                    }
+                });
+            }
+        }
         gcAttendanceEligibleCache.forEach(function(e) {
             var existing = existingByStudentId[e.student_id];
             // Mục 7/11 đề bài: nếu CHƯA có attendance row -> default UI 'present' nhưng CHỈ ở
@@ -387,6 +399,11 @@ function renderAttendanceDetailBody() {
 function buildAttendanceStudentRowHtml(entry) {
     var studentName = entry.students && entry.students.name ? entry.students.name : '(Không có tên)';
     var draft = gcAttendanceDraftByStudentId[entry.student_id] || { status: 'present', notes: '' };
+    var report = gcAttendanceReportByStudentId[entry.student_id];
+    var canReport = gcAttendanceOpenSession
+        && gcAttendanceOpenSession.status === 'completed'
+        && draft.existingId
+        && (draft.status === 'present' || draft.status === 'late');
 
     var buttonsHtml = ATTENDANCE_STATUS_ORDER.map(function(statusKey) {
         var meta = attendanceStatusMeta[statusKey];
@@ -396,13 +413,50 @@ function buildAttendanceStudentRowHtml(entry) {
             'onclick="setAttendanceDraftStatus(\'' + entry.student_id + '\', \'' + statusKey + '\')">' + escapeHtml(meta.label) + '</button>';
     }).join('');
 
+    var reportHtml = canReport
+        ? '<button type="button" class="gc-session-report-btn" onclick="openGroupSessionReportForStudent(\'' + entry.student_id + '\')">' + (report ? (report.status === 'submitted' ? 'Đã báo cáo' : 'Báo cáo nháp') : 'Báo cáo') + '</button>'
+        : '';
+
     return '<div id="gc-att-row-' + entry.student_id + '" style="padding:8px 0; border-top:1px solid var(--border-color);">' +
             '<div style="font-weight:600; font-size:13px; color:var(--text-main); margin-bottom:6px;">' + escapeHtml(studentName) + '</div>' +
             '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;">' + buttonsHtml + '</div>' +
             '<input type="text" placeholder="Ghi chú (không bắt buộc)" value="' + escapeHtml(draft.notes || '') + '" ' +
                 'style="width:100%; padding:6px 8px; font-size:12px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card-sub); color:var(--text-main); font-family:\'Inter\',sans-serif;" ' +
                 'oninput="onAttendanceDraftNotesInput(\'' + entry.student_id + '\', this.value)">' +
+            reportHtml +
         '</div>';
+}
+
+function openGroupSessionReportForStudent(studentId) {
+    var session = gcAttendanceOpenSession;
+    var entry = gcAttendanceEligibleCache.find(function(item) { return item.student_id === studentId; });
+    var draft = gcAttendanceDraftByStudentId[studentId];
+    if (!session || !entry || !draft || !draft.existingId) return;
+    if (session.status !== 'completed' || (draft.status !== 'present' && draft.status !== 'late')) return;
+    if (typeof window.openSessionReportForm !== 'function') return;
+
+    window.openSessionReportForm({
+        source_type: 'group_session',
+        tutor_id: window.activeTutorId,
+        student_id: studentId,
+        group_session_id: session.id,
+        attendance_id: draft.existingId,
+        session_date: session.scheduled_date,
+        student_name: entry.students && entry.students.name ? entry.students.name : '(Không có tên)',
+        subject: '',
+        session_label: String(session.start_time || '').slice(0, 5)
+    });
+}
+
+function refreshGroupSessionReportRow(report) {
+    var session = gcAttendanceOpenSession;
+    if (!session || !report || report.group_session_id !== session.id) return;
+    gcAttendanceReportByStudentId[report.student_id] = report;
+    var entry = gcAttendanceEligibleCache.find(function(item) { return item.student_id === report.student_id; });
+    var row = document.getElementById('gc-att-row-' + report.student_id);
+    if (!entry || !row) return;
+    var button = row.querySelector('.gc-session-report-btn');
+    if (button) button.innerText = report.status === 'submitted' ? 'Đã báo cáo' : 'Báo cáo nháp';
 }
 
 // Chỉ cập nhật highlight của đúng row + counters — KHÔNG re-render toàn bộ #gc-attendance-detail-body

@@ -285,17 +285,6 @@
                     <button type="button" class="tw-quick-btn" onclick="goToAddStudent()">➕ Thêm học sinh</button>
                 </div>
 
-                <!-- ===== ACTION CENTER V1 ("Cần xử lý") — đầu trang Hôm nay, TRƯỚC KPI. Toàn bộ nội
-                     dung do renderActionCenter() dựng lại mỗi lần Today page render (gọi từ cuối
-                     renderTodaysWork()), đọc lại todayItems/lessonsCacheByStudent/paymentsCacheByStudent
-                     đã có sẵn trong bộ nhớ — KHÔNG query Supabase riêng, KHÔNG tạo page/menu mới. ===== -->
-                <div class="ac-section" id="ac-section" style="display:none;">
-                    <div class="tw-section-header">
-                        <h3>✅ Cần xử lý</h3>
-                    </div>
-                    <div id="ac-list" class="ac-list"></div>
-                </div>
-
                 <!-- 4 KPI nhỏ — tính từ todayItems trong bộ nhớ, KHÔNG gọi Supabase riêng -->
                 <div class="tw-kpi-row" id="tw-kpi-row">
                     <div class="tw-kpi-card">
@@ -650,7 +639,7 @@
                         </div>
 
                         <!-- 4. THÔNG BÁO -->
-                        <div class="block-card" data-settings-section="notifications" data-settings-keywords="thông báo notification browser trình duyệt nhật ký journal telegram nhắc lịch">
+                        <div class="block-card" data-settings-section="notifications" data-settings-keywords="thông báo notification browser trình duyệt telegram nhắc lịch">
                             <h3>🔔 Thông báo</h3>
                             <div class="settings-row" style="border-top:none;padding-top:6px;">
                                 <div>
@@ -659,16 +648,6 @@
                                     <div id="settings-browser-notif-status" style="font-size:11.5px;font-weight:700;margin-top:4px;">—</div>
                                 </div>
                                 <button type="button" class="btn-secondary" id="settings-browser-notif-btn" style="padding:7px 12px;font-size:12px;white-space:nowrap;" onclick="requestBrowserNotification(); setTimeout(renderSettingsPage, 300);">🔔 Bật thông báo</button>
-                            </div>
-                            <div class="settings-row">
-                                <div>
-                                    <div class="settings-row-label">Nhắc buổi học chưa có nhật ký</div>
-                                    <div class="settings-row-desc">Nhắc bạn khi có buổi đã hoàn thành nhưng chưa ghi Nhật ký buổi học.</div>
-                                </div>
-                                <label class="settings-toggle">
-                                    <input type="checkbox" id="settings-journal-reminder-toggle" onchange="settingsSetJournalReminder(this.checked)">
-                                    <span class="settings-toggle-slider"></span>
-                                </label>
                             </div>
                             <div class="settings-row">
                                 <div>
@@ -833,10 +812,15 @@
                 </div>
             </div>
 
-            <!-- ===== 2. LỊCH HỌC (public.student_schedules) ===== -->
-            <div class="profile-sub-card profile-full-col">
+            <!-- ===== 2. LỊCH HỌC (public.student_schedules) =====
+                 Mặc định ẨN (collapsed) — chỉ mở khi bấm nút "📅 Lịch học" ở khu vực hero bên dưới
+                 (xem toggleFixedScheduleSection() trong js/app/app.js). Toàn bộ logic/dữ liệu/API
+                 bên trong (đổi thứ, đổi giờ, đổi thời lượng, xóa lịch, thêm lịch, conflict detection)
+                 giữ nguyên 100% — chỉ bọc thêm 1 lớp ẩn/hiện thuần UI. -->
+            <div class="profile-sub-card profile-full-col sched-collapse-panel" id="sched-collapse-panel">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                     <h3 style="margin:0; color:#38bdf8;">🗓️ Lịch học cố định</h3>
+                    <button type="button" class="btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="toggleFixedScheduleSection()">✕ Đóng</button>
                 </div>
                 <div id="sched-error" style="display:none; color:#ef4444; font-size:12.5px; font-weight:600; margin-bottom:10px; white-space:pre-wrap;"></div>
                 <div id="sched-list" style="display:flex; flex-direction:column; gap:8px;"></div>
@@ -864,9 +848,9 @@
             <!-- ============================================================================
                  STUDENT PROFILE 2.0 — Hero header + KPI overview + Tab system.
                  Tái sử dụng TOÀN BỘ function/dữ liệu hiện có (lessonsCacheByStudent, paymentsCacheByStudent,
-                 scheduleRowsCacheByStudent, parseLessonJournal, openLessonDetailModal, findLessonForDate...).
-                 KHÔNG tạo Student Profile thứ hai, KHÔNG tạo Lesson Detail/Journal editor thứ hai — mọi
-                 click "Mở chi tiết"/"Thêm nhật ký" đều gọi lại openLessonDetailModal() đã có sẵn.
+                 scheduleRowsCacheByStudent, openLessonDetailModal, findLessonForDate...).
+                 KHÔNG tạo Student Profile thứ hai, KHÔNG tạo Lesson Detail modal thứ hai — mọi
+                 click "Mở chi tiết" đều gọi lại openLessonDetailModal() đã có sẵn.
                  Card "🧑‍🎓 Thông tin học sinh" và "🗓️ Lịch học cố định" ở trên giữ nguyên vị trí (luôn hiển
                  thị, không đặt trong tab) vì đây là thao tác sửa/thêm dữ liệu dùng thường xuyên.
                  ============================================================================ -->
@@ -883,15 +867,14 @@
                     </div>
                     <div class="sp-hero-actions">
                         <button type="button" class="btn-secondary" style="padding:7px 12px;font-size:12px;" onclick="enterStudentInfoEditMode(); document.getElementById('si-input-name').scrollIntoView({behavior:'smooth',block:'center'});">✏️ Chỉnh sửa</button>
-                        <button type="button" class="btn-secondary" style="padding:7px 12px;font-size:12px;" onclick="document.getElementById('sched-list').scrollIntoView({behavior:'smooth',block:'center'});">📅 Lịch học</button>
-                        <button type="button" class="btn-primary" style="padding:7px 12px;font-size:12px;" id="sp-hero-journal-btn" onclick="spOpenNextLessonJournal()">📝 Nhật ký mới</button>
+                        <button type="button" class="btn-secondary" id="sched-toggle-btn" aria-expanded="false" style="padding:7px 12px;font-size:12px;" onclick="toggleFixedScheduleSection()">📅 Lịch học</button>
+                        <button type="button" class="btn-secondary" id="docs-toggle-btn" aria-expanded="false" style="padding:7px 12px;font-size:12px;" onclick="toggleDocsSection()">📁 Tài liệu</button>
                     </div>
                 </div>
 
                 <div class="sp-kpi-grid" id="sp-kpi-grid">
                     <div class="sp-kpi-card"><div class="sp-kpi-label">📚 Tổng buổi</div><div class="sp-kpi-value" id="sp-kpi-total">—</div></div>
                     <div class="sp-kpi-card"><div class="sp-kpi-label">✅ Đã hoàn thành</div><div class="sp-kpi-value" id="sp-kpi-completed">—</div></div>
-                    <div class="sp-kpi-card"><div class="sp-kpi-label">📝 Journal</div><div class="sp-kpi-value" id="sp-kpi-journal">—</div></div>
                     <div class="sp-kpi-card"><div class="sp-kpi-label">📈 Chuyên cần</div><div class="sp-kpi-value" id="sp-kpi-attendance">—</div></div>
                     <div class="sp-kpi-card"><div class="sp-kpi-label">💰 Học phí tháng này</div><div class="sp-kpi-value" id="sp-kpi-tuition">—</div></div>
                 </div>
@@ -899,7 +882,7 @@
                 <div class="sp-tabs">
                     <button type="button" class="sp-tab-btn active" data-sp-tab="overview" onclick="switchStudentProfileTab('overview')">Tổng quan</button>
                     <button type="button" class="sp-tab-btn" data-sp-tab="history" onclick="switchStudentProfileTab('history')">Lịch sử học</button>
-                    <button type="button" class="sp-tab-btn" data-sp-tab="journal" onclick="switchStudentProfileTab('journal')">Nhật ký</button>
+                    <button type="button" class="sp-tab-btn" data-sp-tab="reports" onclick="switchStudentProfileTab('reports')">Báo cáo học tập</button>
                     <button type="button" class="sp-tab-btn" data-sp-tab="progress" onclick="switchStudentProfileTab('progress')">Tiến độ</button>
                     <button type="button" class="sp-tab-btn" data-sp-tab="tuition" onclick="switchStudentProfileTab('tuition')">Học phí</button>
                 </div>
@@ -914,56 +897,37 @@
                         <div class="sp-section-title">📊 Hoạt động gần đây</div>
                         <div id="sp-recent-activity-box"></div>
                     </div>
-                    <div class="sp-card-mini">
-                        <div class="sp-section-title">📝 Bài tập gần đây</div>
-                        <div id="sp-recent-homework-box"></div>
-                    </div>
                 </div>
 
                 <!-- ===== TAB: LỊCH SỬ HỌC ===== -->
                 <div class="sp-tab-panel" id="sp-tab-history" style="display:none;">
-                    <input type="text" id="sp-history-search" class="sp-search-input" placeholder="🔍 Tìm trong lịch sử... (ngày, môn, nội dung, nhận xét, bài tập)" oninput="spHistorySearchState=this.value; renderStudentHistoryTab(getActiveProfileStudent());">
+                    <input type="text" id="sp-history-search" class="sp-search-input" placeholder="🔍 Tìm trong lịch sử... (ngày, môn)" oninput="spHistorySearchState=this.value; renderStudentHistoryTab(getActiveProfileStudent());">
                     <div class="sp-filter-row" id="sp-history-filter-row">
                         <button type="button" class="sp-filter-btn active" data-sp-history-filter="all" onclick="spSetHistoryFilter('all')">Tất cả</button>
                         <button type="button" class="sp-filter-btn" data-sp-history-filter="completed" onclick="spSetHistoryFilter('completed')">Completed</button>
                         <button type="button" class="sp-filter-btn" data-sp-history-filter="scheduled" onclick="spSetHistoryFilter('scheduled')">Scheduled</button>
                         <button type="button" class="sp-filter-btn" data-sp-history-filter="cancelled" onclick="spSetHistoryFilter('cancelled')">Cancelled</button>
-                        <button type="button" class="sp-filter-btn" data-sp-history-filter="hasJournal" onclick="spSetHistoryFilter('hasJournal')">Có Journal</button>
-                        <button type="button" class="sp-filter-btn" data-sp-history-filter="missingJournal" onclick="spSetHistoryFilter('missingJournal')">Thiếu Journal</button>
                     </div>
                     <div id="sp-history-list-box"></div>
                 </div>
 
-                <!-- ===== TAB: NHẬT KÝ (Journal Center 2.0 — vẫn đọc lessons.notes qua parseLessonJournal(),
-                     KHÔNG tạo editor/modal mới, click 1 buổi luôn gọi lại openLessonDetailModal() đã có) ===== -->
-                <div class="sp-tab-panel" id="sp-tab-journal" style="display:none;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
-                        <div>
-                            <div class="sp-section-title" style="margin-bottom:2px;">📝 Nhật ký học tập</div>
-                            <div style="font-size:12px; color:var(--text-sub);">Lịch sử nội dung, nhận xét và bài tập của học sinh.</div>
+                <!-- ===== TAB: BÁO CÁO HỌC TẬP — đọc một lần theo student_id, mở lại form dùng chung. ===== -->
+                <div class="sp-tab-panel" id="sp-tab-reports" style="display:none;">
+                    <div class="sp-section-title">Báo cáo học tập</div>
+                    <div id="sp-session-reports-list" class="sp-session-reports-list"></div>
+
+                    <!-- ===== BÁO CÁO TUẦN (Weekly Report v1) — TÁI SỬ DỤNG getSessionReportsByStudent() đã có
+                         (lọc status='submitted' + khoảng ngày qua options sẵn có, KHÔNG query mới/N+1). Chỉ
+                         gộp báo cáo ĐÃ báo cáo (submitted) trong 7 ngày chứa ngày được chọn — báo cáo nháp
+                         không xuất hiện trong báo cáo gửi phụ huynh. ===== -->
+                    <div class="sp-card-mini wr-card">
+                        <div class="sp-section-title">📄 Báo cáo tuần gửi phụ huynh</div>
+                        <div class="wr-controls">
+                            <input type="date" id="wr-pick-date" aria-label="Chọn ngày trong tuần">
+                            <button type="button" class="btn-secondary" id="wr-generate-btn" onclick="generateWeeklyReport()">Tạo báo cáo</button>
+                            <button type="button" class="btn-primary" id="wr-export-btn" style="display:none;" onclick="exportWeeklyReportHtml()">Xuất HTML</button>
                         </div>
-                    </div>
-
-                    <div class="sp-progress-stats-row" id="sp-journal-kpi-row"></div>
-
-                    <input type="text" id="sp-journal-search" class="sp-search-input" placeholder="🔍 Tìm trong nhật ký... (nội dung, nhận xét, bài tập, môn, ngày)" oninput="spJournalSearchState=this.value; renderStudentJournalTab(getActiveProfileStudent());">
-
-                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
-                        <div class="sp-filter-row" id="sp-journal-filter-row" style="margin-bottom:0;">
-                            <button type="button" class="sp-filter-btn active" data-sp-journal-filter="all" onclick="spSetJournalFilter('all')">Tất cả</button>
-                            <button type="button" class="sp-filter-btn" data-sp-journal-filter="hasJournal" onclick="spSetJournalFilter('hasJournal')">Có nhật ký</button>
-                            <button type="button" class="sp-filter-btn" data-sp-journal-filter="missing" onclick="spSetJournalFilter('missing')">Chưa có</button>
-                            <button type="button" class="sp-filter-btn" data-sp-journal-filter="hasHomework" onclick="spSetJournalFilter('hasHomework')">Có bài tập</button>
-                            <button type="button" class="sp-filter-btn" data-sp-journal-filter="hasFeedback" onclick="spSetJournalFilter('hasFeedback')">Có nhận xét</button>
-                        </div>
-                        <select id="sp-journal-month-select" onchange="spSetJournalMonth(this.value)" style="margin:0 0 12px auto; padding:7px 10px; font-size:11.5px; width:auto;"></select>
-                    </div>
-
-                    <div id="sp-journal-list-box"></div>
-
-                    <div class="sp-card-mini" style="margin-top:6px;">
-                        <div class="sp-section-title">📌 Bài tập gần đây</div>
-                        <div id="sp-journal-homework-box"></div>
+                        <div id="wr-preview-box"><div class="sp-empty-state">Chọn một ngày bất kỳ trong tuần rồi bấm "Tạo báo cáo".</div></div>
                     </div>
                 </div>
 
@@ -1043,8 +1007,16 @@
             </div>
 
 
-            <div class="profile-sub-card">
-                <h3 style="color: #4ade80;">📂 Kho dữ liệu & Tài liệu giảng dạy</h3>
+            <!-- ===== "KHO DỮ LIỆU & TÀI LIỆU GIẢNG DẠY" — mặc định ẨN (collapsed), giống logic
+                 "Lịch học cố định" ở trên. Mở/đóng qua nút "📁 Tài liệu" đặt cạnh các nút khác ở khu
+                 vực hero (xem toggleDocsSection() trong js/app/app.js). Toàn bộ nội dung/CRUD bên
+                 trong (upload file, nhập tiêu đề/link, lưu liên kết, danh sách file-list-box) giữ
+                 nguyên 100% — chỉ bọc thêm 1 lớp ẩn/hiện thuần UI. -->
+            <div class="profile-sub-card docs-collapse-panel" id="docs-collapse-panel">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 style="margin:0; color: #4ade80;">📁 Kho dữ liệu & Tài liệu giảng dạy</h3>
+                    <button type="button" class="btn-secondary" style="padding:6px 12px; font-size:12px;" onclick="toggleDocsSection()">✕ Đóng</button>
+                </div>
                 <div class="file-upload-wrapper">
                     <span id="upload-status-text" style="font-size: 13px; color: #00cca3; font-weight: bold;">📁 Tải tài liệu trực tiếp từ máy tính</span>
                     <input type="file" onchange="handleComputerFileSelect(this)">
@@ -1056,6 +1028,69 @@
                 <button onclick="addFileLinkManual()" class="btn-submit" style="padding: 10px; font-size: 13px;">Lưu liên kết tài liệu</button>
 
                 <div id="file-list-box" style="margin-top: 20px; max-height: 200px; overflow-y: auto;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: SESSION REPORT V1 — context is read-only; report fields are editable. -->
+    <div class="modal-overlay" id="session-report-modal" onclick="if(event.target===this)window.closeSessionReportForm()">
+        <div class="modal-box session-report-modal-box">
+            <div class="modal-header">
+                <div>
+                    <h3>Báo cáo buổi học</h3>
+                    <div id="session-report-context" class="session-report-context">—</div>
+                </div>
+                <button type="button" class="modal-close" onclick="window.closeSessionReportForm()">✕</button>
+            </div>
+            <form id="session-report-form" class="modal-body session-report-form">
+                <div id="session-report-error" class="session-report-error" role="alert" style="display:none;"></div>
+
+                <div class="session-report-field session-report-field-full">
+                    <label for="session-report-content">Nội dung đã học <span aria-hidden="true">*</span></label>
+                    <textarea id="session-report-content" required rows="2" placeholder="Hôm nay học sinh đã học gì?"></textarea>
+                </div>
+
+                <div class="session-report-fields-grid">
+                    <div class="session-report-field">
+                        <label for="session-report-assessment">Mức độ tiếp thu</label>
+                        <select id="session-report-assessment">
+                            <option value="">Chưa chọn</option>
+                            <option value="Tốt">Tốt</option>
+                            <option value="Khá">Khá</option>
+                            <option value="Cần củng cố">Cần củng cố</option>
+                        </select>
+                    </div>
+
+                    <div class="session-report-field">
+                        <label for="session-report-strengths">Điểm mạnh</label>
+                        <textarea id="session-report-strengths" rows="2" placeholder="Điều học sinh làm tốt..."></textarea>
+                    </div>
+
+                    <div class="session-report-field">
+                        <label for="session-report-improvements">Cần cải thiện</label>
+                        <textarea id="session-report-improvements" rows="2" placeholder="Điểm cần tiếp tục rèn luyện..."></textarea>
+                    </div>
+
+                    <div class="session-report-field">
+                        <label for="session-report-homework">Bài tập về nhà</label>
+                        <textarea id="session-report-homework" rows="2" placeholder="Bài tập hoặc việc cần chuẩn bị..."></textarea>
+                    </div>
+
+                    <div class="session-report-field">
+                        <label for="session-report-parent-note">Nhận xét cho phụ huynh</label>
+                        <textarea id="session-report-parent-note" rows="2" placeholder="Thông tin muốn gửi phụ huynh..."></textarea>
+                    </div>
+
+                    <div class="session-report-field">
+                        <label for="session-report-next-focus">Định hướng buổi tới</label>
+                        <textarea id="session-report-next-focus" rows="2" placeholder="Mục tiêu cho buổi học tiếp theo..."></textarea>
+                    </div>
+                </div>
+            </form>
+            <div class="modal-footer session-report-actions">
+                <button type="button" class="btn-secondary" id="session-report-close-btn">Đóng</button>
+                <button type="button" class="btn-secondary" id="session-report-save-btn">Lưu nháp</button>
+                <button type="submit" form="session-report-form" class="btn-primary" id="session-report-submit-btn">Hoàn thành báo cáo</button>
             </div>
         </div>
     </div>
@@ -1088,52 +1123,6 @@
                     <div id="ld-money" class="ld-value" style="color:#10b981; font-weight:700; font-size:16px;">—</div>
                 </div>
 
-                <div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                        <label class="ld-label" style="margin:0;">📖 Nhật ký buổi học</label>
-                        <button id="ld-notes-edit-btn" class="btn-secondary" style="padding:5px 10px; font-size:11.5px;" onclick="enterLessonNotesEditMode()">✏️ Chỉnh sửa nhật ký</button>
-                    </div>
-
-                    <!-- Banner trạng thái nhật ký (mục 11) — CHỈ hiện khi status = completed: nhắc Tutor
-                         biết buổi đã dạy nhưng chưa ghi lại nội dung, hoặc xác nhận đã có ghi chú. -->
-                    <div id="ld-journal-status-banner" style="display:none; margin-top:8px; padding:9px 12px; border-radius:8px; font-size:12.5px; font-weight:700;"></div>
-
-                    <div id="ld-notes-view">
-                        <div class="ld-journal-block">
-                            <label class="ld-label">📚 Nội dung buổi học</label>
-                            <div id="ld-journal-content-view" class="ld-journal-view-box">—</div>
-                        </div>
-                        <div class="ld-journal-block">
-                            <label class="ld-label">📝 Nhận xét</label>
-                            <div id="ld-journal-feedback-view" class="ld-journal-view-box">—</div>
-                        </div>
-                        <div class="ld-journal-block">
-                            <label class="ld-label">📌 Bài tập về nhà</label>
-                            <div id="ld-journal-homework-view" class="ld-journal-view-box">—</div>
-                        </div>
-                    </div>
-
-                    <div id="ld-notes-input" style="display:none;">
-                        <div class="ld-journal-block">
-                            <label class="ld-label">📚 Nội dung buổi học</label>
-                            <textarea id="ld-journal-content-input" class="ld-journal-textarea" placeholder="Hôm nay đã học gì..."></textarea>
-                        </div>
-                        <div class="ld-journal-block">
-                            <label class="ld-label">📝 Nhận xét</label>
-                            <textarea id="ld-journal-feedback-input" class="ld-journal-textarea" placeholder="Nhận xét về học sinh..." style="min-height:70px;"></textarea>
-                        </div>
-                        <div class="ld-journal-block">
-                            <label class="ld-label">📌 Bài tập về nhà</label>
-                            <textarea id="ld-journal-homework-input" class="ld-journal-textarea" placeholder="Bài tập giao về nhà..." style="min-height:70px;"></textarea>
-                        </div>
-                    </div>
-
-                    <div id="ld-notes-edit-actions" style="display:none; gap:8px; margin-top:8px; justify-content:flex-end;">
-                        <button class="btn-secondary" style="padding:7px 14px; font-size:12px;" onclick="cancelLessonNotesEdit()">Hủy</button>
-                        <button class="btn-primary" style="padding:7px 14px; font-size:12px;" id="ld-notes-save-btn" onclick="saveLessonNotes()">💾 Lưu nhật ký</button>
-                    </div>
-                    <div id="ld-notes-error" style="display:none; color:#ef4444; font-size:12px; font-weight:600; margin-top:6px; white-space:pre-wrap;"></div>
-                </div>
             </div>
         </div>
     </div>
@@ -1923,8 +1912,6 @@
                     <div class="rpt-lesson-stat"><div class="num" id="rpt-tutor-la-completed" style="color:#10b981;">0</div><div class="lbl">Đã dạy</div></div>
                     <div class="rpt-lesson-stat"><div class="num" id="rpt-tutor-la-scheduled" style="color:#38bdf8;">0</div><div class="lbl">Sắp tới</div></div>
                     <div class="rpt-lesson-stat"><div class="num" id="rpt-tutor-la-cancelled" style="color:#ef4444;">0</div><div class="lbl">Hủy</div></div>
-                    <div class="rpt-lesson-stat"><div class="num" id="rpt-tutor-la-journal" style="color:#00cca3;">0</div><div class="lbl">Có nhật ký</div></div>
-                    <div class="rpt-lesson-stat"><div class="num" id="rpt-tutor-la-missing" style="color:#f59e0b;">0</div><div class="lbl">Thiếu nhật ký</div></div>
                 </div>
                 <div id="rpt-tutor-la-rate" style="font-size:12px;color:var(--text-sub);margin-top:10px;"></div>
                 <div id="rpt-tutor-la-empty" style="display:none;text-align:center;color:var(--text-sub);font-size:13px;padding:10px 0 0;"></div>
@@ -1982,7 +1969,7 @@
                 <div style="overflow-x:auto;">
                     <table class="fin-table">
                         <thead>
-                            <tr><th>Học sinh</th><th>Buổi</th><th>Journal</th><th>Doanh thu</th><th>Trạng thái</th></tr>
+                            <tr><th>Học sinh</th><th>Buổi</th><th>Doanh thu</th><th>Trạng thái</th></tr>
                         </thead>
                         <tbody id="rpt-tutor-student-body"></tbody>
                     </table>
@@ -2529,6 +2516,7 @@
     <script type="module" src="./js/core/toast.js"></script>
     <script type="module" src="./js/core/utils.js"></script>
     <script type="module" src="./js/core/supabase.js"></script>
+    <script type="module" src="./js/reports/session-reports.js"></script>
 
     <!-- ===== STUDENTS MODULE (STEP 7C) =====
          Toàn bộ logic list/search/filter/add/edit/delete Students được tách sang
@@ -2543,7 +2531,7 @@
 
     <!-- ===== LESSONS MODULE (STEP 7D) =====
          Toàn bộ logic CRUD/detail của public.lessons (load/create/update/delete/find, flow đổi
-         trạng thái setLessonStatusForDate/removeLessonForDate, Nhật ký buổi học, Lesson Detail
+         trạng thái setLessonStatusForDate/removeLessonForDate, Lesson Detail
          Modal) được tách sang js/lessons/lessons.js (ES module thật, cùng pattern với
          js/students/students.js ở trên). Module này CHẠY SAU khi script chính (classic <script>
          bên dưới) đã chạy xong — nên khi các hàm bên trong THỰC SỰ được người dùng gọi, mọi global
@@ -2571,7 +2559,7 @@
          refreshMonthMoneyDisplay, loadStudentPayments, refreshFeeStatusUI,
          renderPaymentHistory, refreshStudentProfileExtras) và từ js/lessons/lessons.js
          (loadStudentLessons, findLessonForDate, setLessonStatusForDate, removeLessonForDate,
-         openLessonDetailModal, parseLessonJournal) đã tồn tại. Không có phụ thuộc ngược
+         openLessonDetailModal) đã tồn tại. Không có phụ thuộc ngược
          (Calendar không được index.html/Students/Lessons import, và không phụ thuộc chúng —
          chỉ ĐỌC global của chúng). Các biến state dùng chung với goToCalendarDate/
          goToCalendarDateAsWeek (trang "Hôm nay", vẫn ở classic script bên dưới) — tpCalYear,

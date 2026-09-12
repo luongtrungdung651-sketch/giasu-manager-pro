@@ -3,8 +3,9 @@
 // ============================================================================
 // Tách nguyên vẹn phần logic THUẦN LESSONS (public.lessons — BUỔI HỌC THỰC TẾ):
 // CRUD (load/create/update/delete/find), flow đổi trạng thái DUY NHẤT
-// (setLessonStatusForDate/removeLessonForDate), Nhật ký buổi học (parse/format/
-// banner), và Lesson Detail Modal (mở/đóng/render/sửa nhật ký).
+// (setLessonStatusForDate/removeLessonForDate), và Lesson Detail Modal (mở/đóng/render).
+// Tính năng "Nhật ký buổi học" (Lesson Journal) từng có ở đây đã bị GỠ BỎ hoàn toàn —
+// xem khối comment ngay trước openLessonDetailModal() bên dưới.
 //
 // KHÔNG đổi behavior. KHÔNG đổi database/Supabase call. KHÔNG đổi CSS/UI.
 //
@@ -299,93 +300,26 @@ async function removeLessonForDate(student, lessonId) {
 
 
 // ================================================================================
-// ===== NHẬT KÝ BUỔI HỌC (mục 5 spec) =====
-// Database HIỆN CHƯA có cột riêng cho nội dung/nhận xét/bài tập (chỉ có lessons.notes dạng
-// text) — theo đúng yêu cầu, KHÔNG tự ý ALTER TABLE/tạo cột mới. 3 phần được lưu chung vào
-// MỘT cột lessons.notes bằng định dạng có cấu trúc với 3 marker cố định, rồi parse lại khi
-// hiển thị. Đây KHÔNG phải một hệ thống notes thứ hai — vẫn đọc/ghi DUY NHẤT lessons.notes
-// qua updateLesson() đã có sẵn.
+// Tính năng "Nhật ký buổi học" (Lesson Journal) ĐÃ BỊ GỠ BỎ HOÀN TOÀN khỏi UI/flow —
+// lessons.notes vẫn là cột dữ liệu bình thường của public.lessons (KHÔNG xoá cột, KHÔNG
+// xoá dữ liệu cũ trên Supabase), chỉ không còn được app parse/hiển thị có cấu trúc nữa.
+// Session Report (public.session_reports, xem js/reports/session-reports.js) là hệ thống
+// ghi nhận buổi học duy nhất hiện tại.
 // ================================================================================
-var LD_JOURNAL_MARKERS = { content: '[NỘI DUNG]', feedback: '[NHẬN XÉT]', homework: '[BÀI TẬP VỀ NHÀ]' };
 
-// Parse lessons.notes thành 3 phần. Tương thích ngược: nếu notes cũ KHÔNG có marker nào (ghi
-// chú tự do từ trước khi có tính năng này), toàn bộ nội dung cũ được coi là "Nội dung buổi học"
-// để không mất dữ liệu, feedback/homework để trống.
-function parseLessonJournal(notes) {
-    var text = notes || '';
-    var hasMarker = text.indexOf(LD_JOURNAL_MARKERS.content) !== -1
-        || text.indexOf(LD_JOURNAL_MARKERS.feedback) !== -1
-        || text.indexOf(LD_JOURNAL_MARKERS.homework) !== -1;
-    if (!hasMarker) {
-        return { content: text.trim(), feedback: '', homework: '' };
-    }
-    function extract(marker) {
-        var idx = text.indexOf(marker);
-        if (idx === -1) return '';
-        var start = idx + marker.length;
-        var rest = text.slice(start);
-        // Cắt tới marker kế tiếp gần nhất (nếu có) để tách đúng từng phần.
-        var nextIdx = -1;
-        [LD_JOURNAL_MARKERS.content, LD_JOURNAL_MARKERS.feedback, LD_JOURNAL_MARKERS.homework].forEach(function(m) {
-            if (m === marker) return;
-            var i = rest.indexOf(m);
-            if (i !== -1 && (nextIdx === -1 || i < nextIdx)) nextIdx = i;
-        });
-        var section = nextIdx === -1 ? rest : rest.slice(0, nextIdx);
-        return section.trim();
-    }
-    return {
-        content: extract(LD_JOURNAL_MARKERS.content),
-        feedback: extract(LD_JOURNAL_MARKERS.feedback),
-        homework: extract(LD_JOURNAL_MARKERS.homework)
-    };
-}
-
-// Gộp 3 phần thành MỘT chuỗi để ghi vào lessons.notes. Nếu cả 3 đều rỗng, trả về '' (mục 18:
-// cho phép xóa sạch nhật ký) — không ghi marker rỗng vô nghĩa vào Supabase.
-function formatLessonJournal(j) {
-    var content = (j.content || '').trim();
-    var feedback = (j.feedback || '').trim();
-    var homework = (j.homework || '').trim();
-    if (!content && !feedback && !homework) return '';
-    return LD_JOURNAL_MARKERS.content + '\n' + content + '\n\n'
-        + LD_JOURNAL_MARKERS.feedback + '\n' + feedback + '\n\n'
-        + LD_JOURNAL_MARKERS.homework + '\n' + homework;
-}
-
-// Vẽ banner trạng thái nhật ký (mục 11) — dùng chung cho renderLessonDetailModal() và
-// cancelLessonNotesEdit(), luôn RESET cssText về nền cơ bản trước khi set màu để tránh
-// cộng dồn style qua nhiều lần vẽ lại.
-function renderJournalStatusBanner(lesson) {
-    var banner = document.getElementById('ld-journal-status-banner');
-    if (!lesson || lesson.status !== 'completed') {
-        banner.style.display = 'none';
-        return;
-    }
-    var journal = parseLessonJournal(lesson.notes);
-    var hasJournal = !!(journal.content || journal.feedback || journal.homework);
-    banner.style.cssText = 'display:block; margin-top:8px; padding:9px 12px; border-radius:8px; font-size:12.5px; font-weight:700; '
-        + (hasJournal
-            ? 'background:rgba(16,185,129,0.12); color:#10b981; border:1px solid rgba(16,185,129,0.3);'
-            : 'background:rgba(245,158,11,0.12); color:#f59e0b; border:1px solid rgba(245,158,11,0.3);');
-    banner.innerText = hasJournal ? '✓ Đã có ghi chú' : '⚠️ Chưa có nhật ký cho buổi học này';
-}
 // Modal chi tiết MỘT buổi học, dùng CHUNG cho Tutor và Admin (Admin quản lý hộ Tutor chạy
 // trên cùng main-page-view/profile-page-view nên tự động dùng lại modal này, KHÔNG có bản
 // AdminLessonDetail riêng). Modal KHÔNG tự giữ trạng thái buổi học — mỗi lần mở/refresh đều
 // đọc lại từ lessonsCacheByStudent (đã đồng bộ với public.lessons qua loadStudentLessons).
 // Đổi trạng thái trong modal TÁI SỬ DỤNG setLessonStatusForDate() — không có đường đổi status
-// nào khác. Sửa ghi chú UPDATE thẳng vào lessons.notes qua updateLesson() đã có sẵn.
+// nào khác.
 // ================================================================================
 // ===== MODULE QUẢN LÝ BUỔI HỌC — LESSON DETAIL MODAL =====
 
-// focusJournal (mục 12): khi mở từ quick action "📝 Thêm nhật ký" trên card Today, tự động vào
-// luôn edit mode và focus ô "Nội dung buổi học" — KHÔNG tạo modal mới, dùng lại đúng modal này.
-function openLessonDetailModal(student, isoDate, dayName, focusJournal) {
+function openLessonDetailModal(student, isoDate, dayName) {
     currentLessonDetail = { studentId: student.id, isoDate: isoDate, dayName: dayName };
     renderLessonDetailModal();
     document.getElementById('lesson-detail-modal').classList.add('open');
-    if (focusJournal) enterLessonNotesEditMode();
 }
 
 function closeLessonDetailModal() {
@@ -442,118 +376,18 @@ function renderLessonDetailModal() {
         btnBox.appendChild(btn);
     });
 
-    // Nhật ký buổi học — lessons.notes, KHÔNG dùng students.notes (không tồn tại trong schema).
-    // Parse thành 3 phần để hiển thị (mục 5); tương thích ngược với ghi chú tự do cũ (mục 21).
-    var journal = parseLessonJournal(lesson ? lesson.notes : '');
-    var hasJournal = !!(journal.content || journal.feedback || journal.homework);
-    document.getElementById('ld-journal-content-view').innerText = journal.content || '(Chưa có)';
-    document.getElementById('ld-journal-feedback-view').innerText = journal.feedback || '(Chưa có)';
-    document.getElementById('ld-journal-homework-view').innerText = journal.homework || '(Chưa có)';
-
-    var notesEditBtn = document.getElementById('ld-notes-edit-btn');
-    notesEditBtn.innerText = hasJournal ? '✏️ Chỉnh sửa nhật ký' : '✏️ Thêm nhật ký';
-    notesEditBtn.style.display = lesson ? 'inline-block' : 'none'; // chưa có lesson thì chưa có id để UPDATE
-
-    // Banner (mục 11) — CHỈ hiện khi đã hoàn thành: nhắc Tutor buổi nào dạy rồi mà chưa ghi lại.
-    renderJournalStatusBanner(lesson);
-
-    cancelLessonNotesEdit(); // luôn về view mode khi vẽ lại modal
-}
-
-function enterLessonNotesEditMode() {
-    var student = classList.find(function(c) { return c.id === currentLessonDetail.studentId; });
-    if (!student) return;
-    var lesson = findLessonForDate(student.id, currentLessonDetail.isoDate);
-    if (!lesson) return;
-    var journal = parseLessonJournal(lesson.notes);
-    document.getElementById('ld-journal-status-banner').style.display = 'none';
-    document.getElementById('ld-notes-view').style.display = 'none';
-    document.getElementById('ld-notes-edit-btn').style.display = 'none';
-    var contentInput = document.getElementById('ld-journal-content-input');
-    document.getElementById('ld-journal-feedback-input').value = journal.feedback;
-    document.getElementById('ld-journal-homework-input').value = journal.homework;
-    contentInput.value = journal.content;
-    document.getElementById('ld-notes-input').style.display = 'block';
-    document.getElementById('ld-notes-edit-actions').style.display = 'flex';
-    document.getElementById('ld-notes-error').style.display = 'none';
-    contentInput.focus();
-}
-
-function cancelLessonNotesEdit() {
-    document.getElementById('ld-notes-view').style.display = 'block';
-    var lesson = currentLessonDetail.studentId ? findLessonForDate(currentLessonDetail.studentId, currentLessonDetail.isoDate) : null;
-    document.getElementById('ld-notes-edit-btn').style.display = lesson ? 'inline-block' : 'none';
-    document.getElementById('ld-notes-input').style.display = 'none';
-    document.getElementById('ld-notes-edit-actions').style.display = 'none';
-    document.getElementById('ld-notes-error').style.display = 'none';
-    // Vẽ lại banner đúng trạng thái hiện có — dùng chung renderJournalStatusBanner() (mục 11),
-    // không lặp lại logic set màu ở đây.
-    renderJournalStatusBanner(lesson);
-}
-
-async function saveLessonNotes() {
-    var student = classList.find(function(c) { return c.id === currentLessonDetail.studentId; });
-    if (!student) return;
-    var lesson = findLessonForDate(student.id, currentLessonDetail.isoDate);
-    if (!lesson) return;
-
-    var journalInput = {
-        content: document.getElementById('ld-journal-content-input').value,
-        feedback: document.getElementById('ld-journal-feedback-input').value,
-        homework: document.getElementById('ld-journal-homework-input').value
-    };
-    var allEmpty = !journalInput.content.trim() && !journalInput.feedback.trim() && !journalInput.homework.trim();
-    if (allEmpty) {
-        // Mục 18: không bắt buộc nhập, nhưng nếu cả 3 đều trống thì xác nhận trước khi lưu/xoá.
-        if (!confirm('Nhật ký đang trống. Bạn vẫn muốn lưu?')) return;
-    }
-    var newNotes = formatLessonJournal(journalInput);
-
-    var errEl = document.getElementById('ld-notes-error');
-    var saveBtn = document.getElementById('ld-notes-save-btn');
-    errEl.style.display = 'none';
-    saveBtn.disabled = true;
-    saveBtn.innerText = 'Đang lưu...';
-
-    var result = await updateLesson(lesson.id, { notes: newNotes }, student.id);
-
-    saveBtn.disabled = false;
-    saveBtn.innerText = '💾 Lưu nhật ký';
-
-    if (result.error) {
-        errEl.innerText = '⚠️ Không lưu được nhật ký.\n' + describeSupabaseError(result.error);
-        errEl.style.display = 'block';
-        return;
-    }
-
-    // updateLesson() đã cập nhật lessonsCacheByStudent — reload lại từ Supabase để chắc chắn
-    // khớp 100% (giống pattern setLessonStatusForDate), rồi render lại modal + lưới điểm danh.
-    var reload = await loadStudentLessons(student.id);
-    if (reload.error) {
-        errEl.innerText = '⚠️ Đã lưu nhưng không tải lại được dữ liệu mới nhất.\n' + describeSupabaseError(reload.error) + '\nVui lòng tải lại trang.';
-        errEl.style.display = 'block';
-    }
-    renderLessonDetailModal();
-    notifyLessonsDataChanged(student); // để icon 📝 trên dòng lesson cập nhật ngay (STEP 8C: qua notify hook, không gọi thẳng Calendar)
-    renderTodaysWork(); // mục 10: Today (và Calendar nếu đang mở, xem renderTodaysWork()) cập nhật ngay, không F5
-    refreshStudentProfileExtras(student); // Student Profile 2.0 — KPI/Nhật ký/Lịch sử phải khớp journal vừa lưu
-    if (typeof showToast === 'function') showToast('✅', '✓ Đã lưu nhật ký buổi học', student.name || '');
 }
 
 // ============================================================================
 // EXPOSE TỐI THIỂU QUA WINDOW (mục 7 — HTML COMPATIBILITY)
 // Chỉ export những hàm được gọi trực tiếp từ onclick/onchange trong HTML hoặc
 // từ script chính (classic script) như global — đúng pattern của
-// js/students/students.js (STEP 7C). Các hàm nội bộ (không bị gọi từ bên ngoài
-// module này, ví dụ hàm extract() lồng bên trong parseLessonJournal) KHÔNG được
-// expose riêng.
+// js/students/students.js (STEP 7C).
 // ============================================================================
 export {
     loadStudentLessons, createLesson, updateLesson, deleteLesson, findLessonForDate,
     setLessonStatusForDate, removeLessonForDate,
-    parseLessonJournal, formatLessonJournal, renderJournalStatusBanner,
-    openLessonDetailModal, closeLessonDetailModal, renderLessonDetailModal,
-    enterLessonNotesEditMode, cancelLessonNotesEdit, saveLessonNotes
+    openLessonDetailModal, closeLessonDetailModal, renderLessonDetailModal
 };
 
 window.loadStudentLessons = loadStudentLessons;
@@ -563,12 +397,6 @@ window.deleteLesson = deleteLesson;
 window.findLessonForDate = findLessonForDate;
 window.setLessonStatusForDate = setLessonStatusForDate;
 window.removeLessonForDate = removeLessonForDate;
-window.parseLessonJournal = parseLessonJournal;
-window.formatLessonJournal = formatLessonJournal;
-window.renderJournalStatusBanner = renderJournalStatusBanner;
 window.openLessonDetailModal = openLessonDetailModal;
 window.closeLessonDetailModal = closeLessonDetailModal;
 window.renderLessonDetailModal = renderLessonDetailModal;
-window.enterLessonNotesEditMode = enterLessonNotesEditMode;
-window.cancelLessonNotesEdit = cancelLessonNotesEdit;
-window.saveLessonNotes = saveLessonNotes;

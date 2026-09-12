@@ -101,8 +101,8 @@ window.updateState = function(key, updaterFn) {
 // E. LESSONS-DATA-CHANGED HOOK (STEP 8C) — phá circular dependency Calendar ↔ Lessons
 // ----------------------------------------------------------------------
 // TRƯỚC STEP 8C: js/lessons/lessons.js gọi THẲNG window.renderAttendanceGrid(student)
-// (hàm thuộc js/calendar/calendar.js) ngay sau khi mutate lessons (đổi status/xoá buổi/
-// sửa nhật ký), tạo vòng gọi thực sự:
+// (hàm thuộc js/calendar/calendar.js) ngay sau khi mutate lessons (đổi status/xoá buổi),
+// tạo vòng gọi thực sự:
 //   Calendar (click ô điểm danh) → Lessons.setLessonStatusForDate()/removeLessonForDate()
 //   → Lessons gọi lại Calendar.renderAttendanceGrid() để refresh lưới điểm danh.
 // STEP 8C thay cạnh "Lessons → Calendar" bằng cơ chế NOTIFY một chiều qua tầng core:
@@ -112,7 +112,7 @@ window.updateState = function(key, updaterFn) {
 // Calendar — chỉ giữ một danh sách listener chung, đúng hướng dependency "core ở tầng
 // thấp nhất, feature module phụ thuộc core, core không phụ thuộc feature module".
 // Cạnh còn lại "Calendar → Lessons" (Calendar gọi loadStudentLessons/findLessonForDate/
-// setLessonStatusForDate/removeLessonForDate/openLessonDetailModal/parseLessonJournal để
+// setLessonStatusForDate/removeLessonForDate/openLessonDetailModal để
 // đọc/mutate dữ liệu buổi học) CHỦ Ý giữ nguyên — đây là phụ thuộc MỘT CHIỀU bình thường
 // (Calendar dùng lại business logic của Lessons), không phải vòng lặp, và không thể loại
 // bỏ mà không redesign data ownership (ngoài phạm vi STEP 8C — xem mục F báo cáo).

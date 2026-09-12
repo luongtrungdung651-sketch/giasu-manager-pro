@@ -53,11 +53,56 @@
 //
 // NO HARD DELETE (bắt buộc đọc trước khi sửa file này):
 //   group_classes/group_class_enrollments/group_sessions/attendance dùng FK ON DELETE CASCADE
-//   (STEP 11A/11A-FIX, đã apply STEP 11B — xem STEP_11A_DATABASE_SCHEMA_REPORT.md). Xóa cứng 1
-//   group_classes sẽ CASCADE xóa toàn bộ enrollment/session/attendance liên quan — không thể
-//   hoàn tác. Vì vậy Group Class CHỦ Ý không có nút xóa (khác với removeClass() của Students,
-//   KHÔNG copy hành vi đó sang đây) — vòng đời lớp chỉ thay đổi qua trường "Trạng thái"
-//   (active/inactive/completed) trong Edit modal.
+//   (STEP 11A/11A-FIX, đã apply STEP 11B — xem STEP_11A_DATABASE_SCHEMA_REPORT.md). Vòng đời lớp
+//   trước STEP group-class-delete chỉ thay đổi qua trường "Trạng thái" (active/inactive/completed)
+//   trong Edit modal, KHÔNG có nút xóa cứng, đúng như comment gốc ở đây.
+//
+// STEP group-class-delete — GHI ĐÈ ĐOẠN TRÊN: đã thêm nút "🗑️ Xóa lớp" (xem removeGroupClass()
+// cuối file). ĐÃ XÁC NHẬN TRỰC TIẾP TRÊN SUPABASE (pg_constraint.confdeltype) trước khi viết hàm
+// này — FK CASCADE ở DB vẫn y nguyên, KHÔNG hề sửa schema/migration:
+//   group_class_enrollments.group_class_id -> group_classes: CASCADE
+//   group_sessions.group_class_id          -> group_classes: CASCADE
+//   group_class_schedules.group_class_id   -> group_classes: CASCADE
+//   billing_snapshots.group_class_id       -> group_classes: CASCADE
+//   attendance.session_id                  -> group_sessions: CASCADE
+//   payments.group_class_id                -> group_classes: SET NULL (payment KHÔNG bị xóa)
+//   session_reports.group_session_id       -> group_sessions: RESTRICT
+// Vì CASCADE thật sự tồn tại ở DB, removeGroupClass() KHÔNG BAO GIỜ được phép gọi thẳng DELETE —
+// bắt buộc tự đếm dữ liệu phụ thuộc ở tầng application TRƯỚC, và chỉ cho xóa thật khi tất cả = 0
+// (xem removeGroupClass()). RLS "Tutors can delete own group classes" (tutor_id = tutor đang đăng
+// nhập) và "Admins can manage all group classes" đã có sẵn, KHÔNG cần thêm policy nào.
+//
+// STEP group-class-delete-403-FIX — GHI ĐÈ ĐOẠN TRÊN: precheck THẬT SỰ chỉ còn
+// enrollments/sessions/attendance (đếm thẳng bảng, Tutor có SELECT sẵn) +
+// billing_snapshots (qua RPC boolean public.gc_has_billing_history(), KHÔNG select thẳng bảng vì
+// Tutor không có GRANT SELECT trên billing_snapshots — đã xác nhận qua
+// information_schema.role_table_grants). payments KHÔNG còn trong precheck (FK SET NULL, không
+// mất dữ liệu khi xóa lớp). session_reports không precheck — FK RESTRICT ở DB tự chặn DELETE thật
+// nếu còn sót (mã lỗi 23503), xử lý ở BƯỚC 2.
+//
+// STEP group-class-delete-SCHEDULES-NOT-HISTORY — GHI ĐÈ ĐOẠN TRÊN (quy tắc mới, đã áp dụng
+// thật trong removeGroupClass() bên dưới): group_class_schedules KHÔNG PHẢI dữ liệu lịch sử —
+// nó chỉ là cấu hình lịch lặp lại của lớp (thứ/giờ học), không phản ánh việc lớp đã từng diễn ra
+// hay có học viên/điểm danh/học phí thật. Vì vậy:
+//   - group_class_schedules bị BỎ KHỎI hasDependentData — KHÔNG còn dùng để chặn xóa.
+//   - Một lớp mới tạo (có schedule nhưng chưa từng có enrollment/session/attendance/billing)
+//     PHẢI xóa được, dù group_class_schedules còn row.
+//   - Trước khi DELETE group_classes, removeGroupClass() tự xóa các row
+//     group_class_schedules của đúng group_class_id đó (KHÔNG dựa vào FK CASCADE mới — FK
+//     CASCADE hiện có trên group_class_schedules giữ nguyên như cũ, chỉ là ở đây ta chủ động xóa
+//     trước cho rõ ràng và để phát hiện lỗi sớm nếu bước này thất bại).
+//   - Nếu bước xóa schedules lỗi, DỪNG NGAY, KHÔNG gọi DELETE group_classes, KHÔNG báo "xóa
+//     thành công".
+//
+// STEP group-class-delete-DIAGNOSTIC (TẠM THỜI) — GHI ĐÈ ĐOẠN TRÊN: chỉ thêm hiển thị/log chi
+// tiết lý do chặn, KHÔNG đổi điều kiện hasDependentData/thứ tự xử lý ở trên. removeGroupClass()
+// giờ console.log riêng response/error thô của cả 4 precheck (enrollRes/sessionsRes/
+// attendanceRes/billingRpcRes) NGAY SAU khi mỗi cái chạy xong, cộng thêm 1 console.log tổng hợp
+// đúng shape {group_class_id, enrollments_count, group_sessions_count, attendance_count,
+// billing_history}. Khi bị chặn, alert() liệt kê rõ 4 dòng (Học viên/Buổi học/Điểm danh/Lịch sử
+// học phí: Có/Không) thay vì câu chung chung cũ — dùng đúng 4 biến diagEnrollCount/
+// diagSessionsCount/diagAttendanceCount/diagBillingHistory lấy thẳng từ *Res ở trên, KHÔNG query
+// thêm, KHÔNG có nhánh cho phép xóa mới nào. Không đổi DB/RLS/FK/GRANT/UI khác.
 //
 // SUPABASE-ONLY: Group Class là tính năng MỚI, chỉ hoạt động khi có activeTutorId (phiên
 // Supabase — Tutor tự đăng nhập hoặc Admin đang quản lý hộ 1 Tutor cụ thể). KHÔNG hỗ trợ tài
@@ -241,6 +286,7 @@ function renderGroupClassList() {
             </div>
             <div style="display:flex; align-items:center; gap:16px;">
                 <button onclick="openEditGroupClass(${idJs}); event.stopPropagation();" class="btn-edit-class" title="Chỉnh sửa lớp nhóm">✏️</button>
+                <button onclick="removeGroupClass(${idJs}, this); event.stopPropagation();" class="btn-del" title="Xóa lớp nhóm">🗑️</button>
             </div>
         `;
         // Ghi chú "Sĩ số"/"Buổi tiếp theo" CỐ Ý là text tĩnh ở STEP 11E (chưa có
@@ -419,6 +465,268 @@ function closeGroupClassDetail() {
     document.getElementById('main-page-view').style.display = 'flex';
     activeGroupClassId = null;
     renderGroupClassList(); // phản ánh ngay nếu vừa sửa lớp trong lúc ở Detail
+}
+
+// ----------------------------------------------------------------------
+// XÓA LỚP NHÓM (group-class-delete) — HARD DELETE CÓ ĐIỀU KIỆN, CHỈ KHI KHÔNG CÒN DỮ LIỆU
+// LỊCH SỬ PHỤ THUỘC. Xem khối comment "NO HARD DELETE" / "STEP group-class-delete" ở đầu file
+// để biết đầy đủ FK/RLS đã kiểm tra trực tiếp trên Supabase trước khi viết hàm này.
+//
+// STEP group-class-delete-403-FIX — GHI ĐÈ BƯỚC 1 cũ (đã áp dụng thật, không còn giả định):
+//   - payments KHÔNG còn là blocking precheck. FK payments.group_class_id -> group_classes đã
+//     xác nhận lại qua pg_constraint là ON DELETE SET NULL — xóa lớp KHÔNG làm mất payment nào,
+//     chỉ gỡ liên kết group_class_id, nên không cần thiết cho quyết định xóa.
+//   - billing_snapshots KHÔNG SELECT thẳng bảng nữa. Đã xác nhận qua
+//     information_schema.role_table_grants trên Supabase thật: role authenticated KHÔNG có
+//     GRANT SELECT nào trên billing_snapshots (dù RLS "Tutors can view own billing snapshots" đã
+//     đúng ownership) — đây là nguyên nhân 403 thật (lỗi "Không thể kiểm tra dữ liệu học phí").
+//     Thay vì GRANT SELECT thô cho Tutor, dùng RPC boolean-only public.gc_has_billing_history()
+//     (SECURITY DEFINER, chỉ trả true/false, KHÔNG trả total_amount hay bất kỳ số liệu nào). RPC
+//     dùng đúng điều kiện Admin đã đối chiếu từ pg_policies trên group_classes
+//     ("Admins can manage all group classes" = get_my_role() = 'admin'), không đoán tên bảng/cột.
+//   - Thêm group_class_schedules vào precheck: FK CASCADE thật tới group_classes (xác nhận qua
+//     pg_constraint) nhưng KHÔNG được kiểm tra ở bản cũ — gap thật. Tutor đã có sẵn SELECT hợp lệ
+//     trên bảng này (dùng thường xuyên ở schedule.js) nên không phát sinh permission issue mới.
+//   - session_reports KHÔNG được query trực tiếp để precheck — FK RESTRICT
+//     (session_reports.group_session_id -> group_sessions, xác nhận qua pg_constraint) là lưới
+//     bảo vệ cuối ở tầng DB: nếu lọt qua mọi precheck (race condition hiếm), DELETE thật sự sẽ bị
+//     Postgres chặn với mã lỗi 23503 (đã test thật, có ROLLBACK, trên Supabase) — xử lý riêng ở
+//     BƯỚC 2 để hiển thị lý do rõ ràng thay vì lỗi kỹ thuật chung chung.
+// ----------------------------------------------------------------------
+var removeGroupClassInFlight = false;
+
+async function removeGroupClass(id, btnEl) {
+    // Guard chống double-click, cùng pattern removeClassInFlight của js/students/students.js.
+    if (removeGroupClassInFlight) return;
+    var gc = groupClassList.find(function(x) { return x.id === id; });
+    if (!gc) return;
+
+    // confirm() chặn double-click TRONG lúc dialog đang mở; removeGroupClassInFlight (set ngay
+    // sau dòng này) chặn click thứ 2 SAU khi đã bấm OK, trong lúc các query bên dưới đang await.
+    var confirmMsg = 'Bạn có chắc muốn xóa lớp "' + gc.name + '"?\n\n' +
+        '⚠️ Đây là thao tác KHÔNG THỂ HOÀN TÁC.';
+    if (!confirm(confirmMsg)) return;
+
+    removeGroupClassInFlight = true;
+    var origHtml = btnEl ? btnEl.innerHTML : null;
+    if (btnEl) { btnEl.disabled = true; btnEl.innerText = '⏳'; }
+
+    try {
+        // BƯỚC 1 — kiểm tra dữ liệu LỊCH SỬ THẬT trên Supabase (không dùng cache client, vì cache
+        // có thể chưa từng load hoặc đã cũ) TRƯỚC khi cho phép xóa. Chỉ kiểm tra đúng những bảng
+        // thực sự là lịch sử (enrollment/session/attendance/billing) — KHÔNG dùng payments (SET
+        // NULL, không mất dữ liệu) và KHÔNG dùng group_class_schedules (không phải lịch sử — xem
+        // "STEP group-class-delete-SCHEDULES-NOT-HISTORY" ở đầu file) làm blocking gate.
+        var enrollRes = await supabaseClient
+            .from('group_class_enrollments')
+            .select('id', { count: 'exact', head: true })
+            .eq('group_class_id', id);
+        // DIAGNOSTIC (tạm, chỉ log, KHÔNG đổi logic quyết định) — log riêng response/error thô
+        // của từng precheck để xác định chính xác bảng nào đang chặn xóa.
+        console.log('[GC-DELETE-DIAGNOSTIC] enrollRes:', enrollRes);
+        if (enrollRes.error) { alert('⚠️ Không thể kiểm tra dữ liệu học viên: ' + describeSupabaseError(enrollRes.error)); return; }
+
+        // DIAGNOSTIC (tạm, chỉ đọc/log, KHÔNG dùng cho hasDependentData — enrollRes ở trên vẫn là
+        // nguồn duy nhất quyết định chặn/không chặn, giữ nguyên y hệt) — query RIÊNG lấy đủ field
+        // để xác định chính xác 1 enrollment đang là gì (active hay đã left từ bao giờ).
+        var diagEnrollRowsRes = await supabaseClient
+            .from('group_class_enrollments')
+            .select('id, student_id, status, joined_at, left_at')
+            .eq('group_class_id', id);
+        console.log('[GC-DELETE-DIAGNOSTIC] enrollment rows chi tiết:', JSON.stringify(diagEnrollRowsRes.data, null, 2));
+        if (diagEnrollRowsRes.error) {
+            console.error('[GC-DELETE-DIAGNOSTIC] Lỗi query chi tiết enrollment (chỉ log, KHÔNG chặn xóa):', diagEnrollRowsRes.error);
+        }
+
+        // group_sessions — STEP group-class-delete-FUTURE-VS-HISTORICAL: lấy đủ scheduled_date +
+        // status thay vì chỉ đếm, để phân biệt "buổi tương lai do Generator tự sinh từ
+        // group_class_schedules" (KHÔNG chặn xóa) với "buổi đã diễn ra / có dữ liệu thực tế"
+        // (VẪN chặn xóa) — xem audit A/B ở comment đầu file.
+        // DIAGNOSTIC: thêm session_type vào select (CHỈ để log/xác định, hasDependentData và
+        // historicalSessions/futureSessions bên dưới VẪN chỉ dùng status/scheduled_date như cũ,
+        // KHÔNG đổi điều kiện phân loại).
+        var sessionsRes = await supabaseClient
+            .from('group_sessions')
+            .select('id, scheduled_date, status, session_type')
+            .eq('group_class_id', id);
+        console.log('[GC-DELETE-DIAGNOSTIC] sessionsRes:', sessionsRes);
+        if (sessionsRes.error) { alert('⚠️ Không thể kiểm tra dữ liệu buổi học: ' + describeSupabaseError(sessionsRes.error)); return; }
+
+        // todayIso dùng đúng helper getLocalIsoDate() sẵn có (js/core/utils.js, cùng cách
+        // generator.js/enrollment.js đang tính "hôm nay") — KHÔNG tự chế logic ngày mới.
+        var todayIso = getLocalIsoDate(new Date());
+        var allSessions = sessionsRes.data || [];
+        // historical: status khác 'scheduled' (đã completed/cancelled = quyết định thật) HOẶC
+        // scheduled_date đã tới/qua hôm nay (dù status chưa kịp cập nhật) — coi là "đã diễn ra".
+        var historicalSessions = allSessions.filter(function(s) {
+            return s.status !== 'scheduled' || s.scheduled_date <= todayIso;
+        });
+        // future: CHỈ những buổi còn 'scheduled' VÀ ngày còn ở tương lai — đúng tập Generator tự
+        // sinh từ Lịch học hàng tuần, chưa từng diễn ra, KHÔNG có dữ liệu thực tế nào.
+        var futureSessions = allSessions.filter(function(s) {
+            return s.status === 'scheduled' && s.scheduled_date > todayIso;
+        });
+        // DIAGNOSTIC (tạm, chỉ log) — liệt kê từng session kèm nhãn phân loại thật (historical/
+        // future) để xác định chính xác 1 historical session đang là gì, KHÔNG đổi
+        // historicalSessions/futureSessions ở trên.
+        console.log('[GC-DELETE-DIAGNOSTIC] group_sessions phân loại chi tiết:', JSON.stringify(allSessions.map(function(s) {
+            return {
+                id: s.id,
+                scheduled_date: s.scheduled_date,
+                status: s.status,
+                session_type: s.session_type,
+                classification: (s.status !== 'scheduled' || s.scheduled_date <= todayIso) ? 'historical' : 'future'
+            };
+        }), null, 2));
+
+        // attendance không có cột group_class_id trực tiếp (chỉ có session_id) — lọc qua bảng
+        // group_sessions bằng embedded filter của PostgREST (attendance.session_id ->
+        // group_sessions.id đã có FK sẵn nên PostgREST nhận diện được quan hệ này).
+        var attendanceRes = await supabaseClient
+            .from('attendance')
+            .select('id, group_sessions!inner(group_class_id)', { count: 'exact', head: true })
+            .eq('group_sessions.group_class_id', id);
+        console.log('[GC-DELETE-DIAGNOSTIC] attendanceRes:', attendanceRes);
+        if (attendanceRes.error) { alert('⚠️ Không thể kiểm tra dữ liệu điểm danh: ' + describeSupabaseError(attendanceRes.error)); return; }
+
+        // DIAGNOSTIC (tạm, chỉ đọc/log, KHÔNG dùng cho hasDependentData — attendanceRes ở trên
+        // vẫn là nguồn duy nhất quyết định chặn/không chặn, giữ nguyên y hệt) — query RIÊNG lấy
+        // đủ field (kèm join group_sessions lấy scheduled_date/status/session_type) để xác định
+        // chính xác 1 attendance đang gắn với buổi nào, ngày nào, trạng thái gì.
+        //
+        // FIX (audit schema thật, xem js/group-class/attendance.js dòng ~19-21, SOURCE OF TRUTH
+        // STEP 11H-A): public.attendance có cột session_id (FK -> group_sessions, CASCADE) và
+        // student_id (FK -> students, CASCADE) — KHÔNG có cột "group_session_id" (tên đó không
+        // tồn tại trong schema thật, đó là nguyên nhân HTTP 400 ở query cũ). attendance CŨNG
+        // KHÔNG có FK trực tiếp tới group_class_enrollments (không có enrollment_id) — enrollment
+        // hợp lệ được enforce bằng trigger check_attendance_enrollment(), không phải FK, nên
+        // KHÔNG query enrollment ở đây. Sửa lại đúng tên cột thật: session_id (không đổi ý nghĩa,
+        // vẫn cùng 1 giá trị dùng để biết attendance thuộc buổi học nào).
+        var diagAttendanceRowsRes = await supabaseClient
+            .from('attendance')
+            .select('id, session_id, student_id, status, group_sessions!inner(group_class_id, scheduled_date, status, session_type)')
+            .eq('group_sessions.group_class_id', id);
+        console.log('[GC-DELETE-DIAGNOSTIC] attendance rows chi tiết (session_id = cột FK thật tới group_sessions, KHÔNG phải group_session_id):', JSON.stringify(diagAttendanceRowsRes.data, null, 2));
+        if (diagAttendanceRowsRes.error) {
+            console.error('[GC-DELETE-DIAGNOSTIC] Lỗi query chi tiết attendance (chỉ log, KHÔNG chặn xóa):', diagAttendanceRowsRes.error);
+        }
+
+        // billing_snapshots — RPC boolean-only (public.gc_has_billing_history, đã apply migration
+        // trên Supabase), KHÔNG select thẳng bảng, KHÔNG lộ số tiền/dữ liệu billing nào.
+        var billingRpcRes = await supabaseClient.rpc('gc_has_billing_history', { p_group_class_id: id });
+        console.log('[GC-DELETE-DIAGNOSTIC] billingRpcRes:', billingRpcRes);
+        if (billingRpcRes.error) { alert('⚠️ Không thể kiểm tra dữ liệu học phí: ' + describeSupabaseError(billingRpcRes.error)); return; }
+
+        // group_class_schedules KHÔNG còn nằm trong precheck này (quy tắc mới: schedule không
+        // phải dữ liệu lịch sử — xem comment "STEP group-class-delete-SCHEDULES-NOT-HISTORY" ở
+        // đầu file). Nó được xóa riêng ở BƯỚC 2 trước khi DELETE group_classes, KHÔNG dùng để
+        // quyết định hasDependentData.
+        var diagEnrollCount = enrollRes.count || 0;
+        var diagSessionsCount = historicalSessions.length;
+        var diagAttendanceCount = attendanceRes.count || 0;
+        var diagBillingHistory = billingRpcRes.data === true;
+
+        // DIAGNOSTIC (tạm) — log tổng hợp đúng shape yêu cầu, KHÔNG dùng để tính hasDependentData
+        // (hasDependentData vẫn tính thẳng từ *Res/historicalSessions ở dưới, giữ nguyên logic
+        // quyết định cũ, chỉ thay phần group_sessions theo audit đã thống nhất).
+        console.log('[GC-DELETE-DIAGNOSTIC] summary:', {
+            group_class_id: id,
+            enrollments_count: diagEnrollCount,
+            group_sessions_count: diagSessionsCount,
+            group_sessions_total: allSessions.length,
+            group_sessions_future: futureSessions.length,
+            attendance_count: diagAttendanceCount,
+            billing_history: diagBillingHistory
+        });
+
+        // STEP group-class-delete-FUTURE-VS-HISTORICAL: CHỈ historicalSessions mới chặn xóa —
+        // futureSessions (Generator tự sinh, chưa diễn ra) KHÔNG được coi là dữ liệu lịch sử.
+        var hasDependentData = (enrollRes.count || 0) > 0 || historicalSessions.length > 0 ||
+            (attendanceRes.count || 0) > 0 || billingRpcRes.data === true;
+
+        if (hasDependentData) {
+            // CHẶN CỨNG — không được gọi DELETE trong trường hợp này (xem cảnh báo CASCADE ở
+            // đầu file). Đây chính là hàng rào ngăn cascade xóa lịch sử THẬT (học viên/buổi
+            // học/điểm danh/học phí) — group_class_schedules không còn ở đây.
+            // DIAGNOSTIC (tạm) — popup giờ liệt kê rõ từng loại dữ liệu thay vì câu chung chung,
+            // dùng đúng 4 biến diag* ở trên (không tính lại, không đổi điều kiện chặn).
+            alert(
+                'Không thể xóa lớp vì còn dữ liệu:\n' +
+                'Học viên: ' + diagEnrollCount + '\n' +
+                'Buổi học: ' + diagSessionsCount + '\n' +
+                'Điểm danh: ' + diagAttendanceCount + '\n' +
+                'Lịch sử học phí: ' + (diagBillingHistory ? 'Có' : 'Không')
+            );
+            return;
+        }
+
+        // BƯỚC 1b — KHÔNG còn dữ liệu lịch sử thật: xóa các futureSessions (chỉ đúng danh sách id
+        // đã xác định ở trên, KHÔNG xóa theo group_class_id mù) TRƯỚC group_class_schedules/
+        // group_classes, đúng audit đã thống nhất (mục 4). Nếu bước này lỗi, DỪNG NGAY, KHÔNG gọi
+        // DELETE group_class_schedules/group_classes, KHÔNG báo xóa thành công.
+        if (futureSessions.length > 0) {
+            var futureSessionIds = futureSessions.map(function(s) { return s.id; });
+            var delFutureSessionsRes = await supabaseClient
+                .from('group_sessions')
+                .delete()
+                .in('id', futureSessionIds);
+            if (delFutureSessionsRes.error) {
+                console.error('XÓA future group_sessions FAILED:', delFutureSessionsRes.error);
+                alert('⚠️ Không thể xóa các buổi học tương lai của lớp: ' + describeSupabaseError(delFutureSessionsRes.error));
+                return;
+            }
+        }
+
+        // BƯỚC 2a — xóa group_class_schedules của đúng lớp này TRƯỚC (schedule không phải lịch
+        // sử, chỉ là cấu hình lặp lại — xem comment đầu file).
+        // Nếu bước này lỗi, DỪNG NGAY, KHÔNG gọi DELETE group_classes, KHÔNG báo xóa thành công.
+        var delSchedRes = await supabaseClient
+            .from('group_class_schedules')
+            .delete()
+            .eq('group_class_id', id);
+        if (delSchedRes.error) {
+            console.error('XÓA group_class_schedules FAILED:', delSchedRes.error);
+            alert('⚠️ Không thể xóa lịch học của lớp: ' + describeSupabaseError(delSchedRes.error));
+            return;
+        }
+
+        // BƯỚC 2b — chỉ sau khi group_class_schedules đã xóa xong mới gọi DELETE group_classes.
+        // RLS "Tutors can delete own group classes" tự giới hạn tutor_id = tutor đang đăng nhập;
+        // nếu Supabase từ chối (RLS/lỗi mạng/...) thì rơi vào nhánh error bên dưới — KHÔNG đụng
+        // vào groupClassList/UI, giữ nguyên dữ liệu, không giả lập xóa thành công (schedule đã bị
+        // xóa thật ở bước trên, nhưng group_classes vẫn còn — KHÔNG coi đây là "xóa lớp thành
+        // công" vì lớp mẹ vẫn tồn tại).
+        var delRes = await supabaseClient.from('group_classes').delete().eq('id', id);
+        if (delRes.error) {
+            console.error('XÓA LỚP NHÓM FAILED:', delRes.error);
+            // Lưới bảo vệ cuối: nếu vẫn còn session_reports lọt qua precheck (race condition
+            // hiếm), FK RESTRICT ở DB sẽ chặn ở đây với mã 23503 — hiển thị lý do rõ ràng thay vì
+            // lỗi kỹ thuật chung chung.
+            if (delRes.error.code === '23503') {
+                alert('⚠️ Không thể xóa: lớp vẫn còn báo cáo buổi học (Session Reports) liên quan chưa được gỡ.');
+            } else {
+                alert('⚠️ Không thể xóa lớp: ' + describeSupabaseError(delRes.error));
+            }
+            return;
+        }
+
+        // BƯỚC 3 — CHỈ cập nhật UI SAU KHI Supabase xác nhận xóa thành công (không có card cũ
+        // nào còn sót lại vì renderGroupClassList() vẽ lại toàn bộ từ groupClassList đã lọc).
+        groupClassList = groupClassList.filter(function(x) { return x.id !== id; });
+        if (activeGroupClassId === id) { closeGroupClassDetail(); }
+        renderGroupClassList();
+        showToast('✅', 'Đã xóa lớp nhóm', gc.name);
+    } catch (err) {
+        console.error('[GROUP CLASS] Xóa lớp nhóm EXCEPTION:', err);
+        alert('⚠️ Lỗi không xác định khi xóa lớp.');
+    } finally {
+        // Luôn restore dù thành công hay lỗi. Nếu xóa thành công, renderGroupClassList() ở trên
+        // đã vẽ lại toàn bộ danh sách (card cũ + nút cũ không còn trong DOM) nên gán lại btnEl vô
+        // hại; nếu lỗi/return sớm, renderGroupClassList() KHÔNG chạy nên nút vẫn còn trên DOM và
+        // cần được restore đúng ở đây — cùng pattern removeClass() của js/students/students.js.
+        removeGroupClassInFlight = false;
+        if (btnEl) { btnEl.disabled = false; if (origHtml !== null) btnEl.innerHTML = origHtml; }
+    }
 }
 
 function renderGroupClassDetailHero(gc) {
@@ -756,7 +1064,8 @@ export {
     addNewGroupClass,
     openEditGroupClass, openEditGroupClassFromDetail, closeEditGroupClass, saveEditGroupClass,
     openGroupClassDetail, closeGroupClassDetail, switchGroupClassTab,
-    syncGroupClassOverviewEnrollmentCount, refreshGroupClassOverviewAttendanceSummary
+    syncGroupClassOverviewEnrollmentCount, refreshGroupClassOverviewAttendanceSummary,
+    removeGroupClass
 };
 
 window.loadGroupClassesIfNeeded = loadGroupClassesIfNeeded;
@@ -775,3 +1084,5 @@ window.syncGroupClassOverviewEnrollmentCount = syncGroupClassOverviewEnrollmentC
 // STEP 11H-D — gọi từ js/group-class/attendance.js sau khi Save thành công (mục 15), KHÔNG phải
 // từ HTML onclick, cùng lý do syncGroupClassOverviewEnrollmentCount ở trên.
 window.refreshGroupClassOverviewAttendanceSummary = refreshGroupClassOverviewAttendanceSummary;
+// STEP group-class-delete — gọi từ onclick="removeGroupClass(...)" trong renderGroupClassList().
+window.removeGroupClass = removeGroupClass;

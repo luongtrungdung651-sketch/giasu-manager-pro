@@ -406,13 +406,25 @@
             document.getElementById('view-student-title').innerText = "Hồ sơ học sinh: " + student.name;
             document.getElementById('view-student-subtitle').innerText = "Bộ môn: " + student.subject + " | Lịch dạy cố định: " + buildScheduleDisplay(student);
 
+            // "Lịch học cố định" và "Kho dữ liệu & Tài liệu giảng dạy" luôn bắt đầu ở trạng thái ĐÓNG
+            // mỗi khi mở hồ sơ (mới hoặc mở lại), đúng yêu cầu "mặc định ẩn" — tránh lộ dữ liệu của
+            // học sinh trước đó ra ngay khi vừa mở trang.
+            setFixedScheduleSectionOpen(false);
+            setDocsSectionOpen(false);
+
             // Student Profile 2.0 — reset về tab/filter mặc định mỗi khi mở hồ sơ MỘT học sinh mới,
             // tránh giữ lại filter/search của học sinh vừa xem trước đó.
-            spHistoryFilterState = 'all'; spJournalFilterState = 'all'; spHistorySearchState = '';
-            spJournalSearchState = ''; spJournalMonthState = 'all';
+            spHistoryFilterState = 'all'; spHistorySearchState = '';
             var spSearchInput = document.getElementById('sp-history-search'); if (spSearchInput) spSearchInput.value = '';
-            var spJournalSearchInput = document.getElementById('sp-journal-search'); if (spJournalSearchInput) spJournalSearchInput.value = '';
             switchStudentProfileTab('overview');
+
+            // Weekly Report v1 — reset khi mở hồ sơ MỘT học sinh mới, tránh giữ báo cáo tuần của học
+            // sinh vừa xem trước đó (đặc biệt tránh xuất nhầm file HTML của học sinh khác).
+            activeWeeklyReport = null;
+            var wrDateInput = document.getElementById('wr-pick-date'); if (wrDateInput) wrDateInput.value = '';
+            var wrExportBtn = document.getElementById('wr-export-btn'); if (wrExportBtn) wrExportBtn.style.display = 'none';
+            var wrPreviewBox = document.getElementById('wr-preview-box');
+            if (wrPreviewBox) wrPreviewBox.innerHTML = '<div class="sp-empty-state">Chọn một ngày bất kỳ trong tuần rồi bấm "Tạo báo cáo".</div>';
 
             buildMonthDropdown();
             renderStudentInfoCard(student);
@@ -571,6 +583,61 @@
         // ĐÚNG MỘT DÒNG mỗi lần theo id — an toàn hơn khi chỉ cần sửa 1 buổi trong tuần.
         // ================================================================================
         var scheduleRowsCacheByStudent = {};
+
+        // ----------------------------------------------------------------------
+        // "Lịch học cố định" — collapse/expand THUẦN UI trong Student Profile.
+        // Mặc định ẩn; bấm nút "📅 Lịch học" ở khu vực hero để mở/đóng. Không đụng tới
+        // renderScheduleList/loadStudentScheduleRows/addScheduleRow/conflict detection bên trong —
+        // toggle chỉ show/hide đúng cái div bọc ngoài (#sched-collapse-panel).
+        function setFixedScheduleSectionOpen(open) {
+            var panel = document.getElementById('sched-collapse-panel');
+            var btn = document.getElementById('sched-toggle-btn');
+            if (!panel) return;
+            if (open) {
+                panel.classList.add('is-open');
+                // reset rồi thêm lại class animation để hiệu ứng chạy mỗi lần mở (kể cả mở liên tiếp)
+                panel.classList.remove('sched-anim-in');
+                void panel.offsetWidth; // ép reflow để trigger lại animation
+                panel.classList.add('sched-anim-in');
+            } else {
+                panel.classList.remove('is-open');
+                panel.classList.remove('sched-anim-in');
+            }
+            if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        function toggleFixedScheduleSection() {
+            var panel = document.getElementById('sched-collapse-panel');
+            if (!panel) return;
+            setFixedScheduleSectionOpen(!panel.classList.contains('is-open'));
+        }
+
+        // ----------------------------------------------------------------------
+        // "Kho dữ liệu & Tài liệu giảng dạy" — collapse/expand THUẦN UI, cùng cơ chế với
+        // "Lịch học cố định" ở trên. Mặc định ẩn; bấm nút "📁 Tài liệu" ở khu vực hero để mở/đóng.
+        // Không đụng tới handleComputerFileSelect/addFileLinkManual/renderFileList (hay tên hàm CRUD
+        // tài liệu tương đương) bên trong — toggle chỉ show/hide đúng div bọc ngoài (#docs-collapse-panel).
+        function setDocsSectionOpen(open) {
+            var panel = document.getElementById('docs-collapse-panel');
+            var btn = document.getElementById('docs-toggle-btn');
+            if (!panel) return;
+            if (open) {
+                panel.classList.add('is-open');
+                panel.classList.remove('docs-anim-in');
+                void panel.offsetWidth; // ép reflow để trigger lại animation mỗi lần mở
+                panel.classList.add('docs-anim-in');
+            } else {
+                panel.classList.remove('is-open');
+                panel.classList.remove('docs-anim-in');
+            }
+            if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+
+        function toggleDocsSection() {
+            var panel = document.getElementById('docs-collapse-panel');
+            if (!panel) return;
+            setDocsSectionOpen(!panel.classList.contains('is-open'));
+        }
 
         async function loadStudentScheduleRows(studentId) {
             try {
@@ -947,10 +1014,6 @@
             if (tpCurrentPage === 'calendar') {
                 if (tpCalMainView === 'week') { renderTpWeekView(); } else { renderTpCalendar(); }
             }
-
-            // Nhắc "buổi đã hoàn thành nhưng chưa có Nhật ký" (mục 4 Settings) — chỉ đọc todayItems đã
-            // tính ở trên, không gọi thêm Supabase, tự dedupe theo ngày bên trong checkJournalReminders().
-            checkJournalReminders(todayItems);
         }
 
         // Card "BUỔI TIẾP THEO" (mục 9) — ưu tiên buổi CHƯA hoàn thành/chưa huỷ gần nhất trong hôm
@@ -1162,13 +1225,13 @@
 
         // ================================================================================
         // ===== TRANG "CÀI ĐẶT GIA SƯ" (tp-page-settings) =====
-        // Preference cá nhân CHƯA có cột riêng trên Supabase (compact/journalReminder/defaultDuration/
+        // Preference cá nhân CHƯA có cột riêng trên Supabase (compact/defaultDuration/
         // weekStart/bio) -> lưu localStorage theo key gsm_tutor_settings_<tutorId|currentUser>, đúng
         // cơ chế đã dùng cho theme/notif/last-sync trong app (KHÔNG tạo cơ chế storage thứ hai).
         // Tên hiển thị + số điện thoại THÌ ĐÃ có cột thật trên Supabase (tutors.display_name,
         // tutors.phone) nên ghi thẳng vào đó cho phiên Supabase — xem saveSettingsProfile().
         // ================================================================================
-        var SETTINGS_DEFAULTS = { compact: false, journalReminder: true, defaultDuration: '2', weekStart: '1', bio: '' };
+        var SETTINGS_DEFAULTS = { compact: false, defaultDuration: '2', weekStart: '1', bio: '' };
 
         function getTutorSettingsKey() {
             return 'gsm_tutor_settings_' + (activeTutorId || currentUser || 'guest');
@@ -1195,7 +1258,7 @@
 
         // Badge tự động lưu (mục 4 nâng cấp Settings) — khi 1 preference local thay đổi, hiện "✓ Đã lưu"
         // trong ~1.2s rồi quay lại text mặc định "✓ Tự động lưu". Không có nút Save riêng cho các
-        // preference này (compact/journalReminder/defaultDuration/weekStart/bio) vì đã autosave.
+        // preference này (compact/defaultDuration/weekStart/bio) vì đã autosave.
         function flashAutosaveBadge() {
             var badge = document.getElementById('settings-autosave-badge');
             if (!badge) return;
@@ -1232,30 +1295,6 @@
             flashAutosaveBadge();
         }
 
-        function settingsSetJournalReminder(checked) {
-            saveTutorSettingsPatch({ journalReminder: checked });
-            flashAutosaveBadge();
-        }
-
-        // Nhắc "buổi đã hoàn thành nhưng chưa có Nhật ký" (mục 4) — CHỈ đọc lessonsCacheByStudent đã có
-        // sẵn (KHÔNG gọi Supabase riêng), gọi từ cuối renderTodaysWork() nên luôn dùng đúng dữ liệu Today
-        // đang hiển thị. Dedupe 1 lần/ngày để không làm phiền Tutor mỗi lần Today render lại.
-        function checkJournalReminders(todayItems) {
-            if (!getTutorSettings().journalReminder) return;
-            if (!todayItems || !todayItems.length) return;
-            var todayIso = getLocalIsoDate(new Date());
-            var dedupeKey = 'gsm_journal_reminder_shown_' + (activeTutorId || currentUser) + '_' + todayIso;
-            if (localStorage.getItem(dedupeKey)) return;
-            var missing = todayItems.filter(function(item) {
-                if (item.status !== 'completed') return false;
-                var j = parseLessonJournal(item.lesson ? item.lesson.notes : '');
-                return !(j.content || j.feedback || j.homework);
-            });
-            if (missing.length === 0) return;
-            localStorage.setItem(dedupeKey, '1');
-            showToast('📝', 'Còn ' + missing.length + ' buổi chưa ghi nhật ký', 'Hôm nay bạn đã hoàn thành nhưng chưa ghi lại nội dung.');
-        }
-
         // ================================================================================
         // ===== ACTION CENTER V1 (trang "Hôm nay" — mục "Cần xử lý") =====
         // Tổng hợp các việc CẦN XỬ LÝ NGAY từ dữ liệu đã có sẵn trong bộ nhớ: todayItems (đã tính
@@ -1275,32 +1314,6 @@
                 var cfg = JSON.parse(localStorage.getItem('gsm_notif_' + currentUser) || '{}');
                 return (typeof cfg.minutesBefore === 'number' && cfg.minutesBefore > 0) ? cfg.minutesBefore : 60;
             } catch (e) { return 60; }
-        }
-
-        // Mục 2B JOURNAL DUE — quét lessonsCacheByStudent (đã nạp sẵn) của TẤT CẢ học sinh Supabase,
-        // tìm buổi completed nhưng chưa ghi nhật ký (parseLessonJournal() đã có, giống hệt logic dùng
-        // cho indicator ⚠️/📝 trên Month Calendar). Giới hạn 30 ngày gần nhất để Action Center không bị
-        // dài do nhật ký cũ hàng tháng trước — nhật ký cũ hơn vẫn xem đủ trong tab "Nhật ký" của Student
-        // Profile, không mất dữ liệu.
-        function acGetJournalDueItems(now) {
-            var cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-            var out = [];
-            classList.filter(function(c) { return c._supabaseSource; }).forEach(function(student) {
-                var cache = lessonsCacheByStudent[student.id] || [];
-                cache.forEach(function(lesson) {
-                    if (lesson.status !== 'completed' || !lesson.scheduled_date) return;
-                    var d = new Date(lesson.scheduled_date + 'T00:00:00');
-                    if (d < cutoff) return;
-                    var j = parseLessonJournal(lesson.notes);
-                    if (j.content || j.feedback || j.homework) return; // đã ghi nhật ký
-                    out.push({
-                        student: student, isoDate: lesson.scheduled_date,
-                        dayName: DAY_NUMBER_TO_NAME[d.getDay()], startTime: lesson.start_time || null
-                    });
-                });
-            });
-            out.sort(function(a, b) { return a.isoDate < b.isoDate ? 1 : (a.isoDate > b.isoDate ? -1 : 0); }); // gần nhất trước
-            return out;
         }
 
         // Mục 2C OUTSTANDING PAYMENT — dùng ĐÚNG getMoneyRemainingInMonth() đã có (đọc
@@ -1362,10 +1375,10 @@
             return card;
         }
 
-        // Tổng hợp + sắp xếp theo mục 3 (1.lesson sắp bắt đầu 2.journal chưa ghi 3.payment còn thiếu
-        // 4.tomorrow preview) + render — gọi từ CUỐI phần tính todayItems trong renderTodaysWork() nên
-        // LUÔN cập nhật mỗi khi Today page render lại (complete lesson / lưu journal / ghi payment đều
-        // gọi lại renderTodaysWork() sẵn có) — KHÔNG cần realtime subscription mới (mục 7).
+        // Tổng hợp + sắp xếp theo mục 3 (1.lesson sắp bắt đầu 2.payment còn thiếu 3.tomorrow preview)
+        // + render — gọi từ CUỐI phần tính todayItems trong renderTodaysWork() nên LUÔN cập nhật mỗi
+        // khi Today page render lại (complete lesson / ghi payment đều gọi lại renderTodaysWork() sẵn
+        // có) — KHÔNG cần realtime subscription mới (mục 7).
         function renderActionCenter(now, todayItems) {
             var wrap = document.getElementById('ac-section');
             var list = document.getElementById('ac-list');
@@ -1397,23 +1410,6 @@
                     onClick: function() { openLessonDetailModal(c, item.isoDate, item.dayName); }
                 }));
             });
-
-            // ---- B. JOURNAL DUE (group nếu nhiều — mục 3 "Nếu có nhiều action cùng loại: group") ----
-            var journalDue = acGetJournalDueItems(now);
-            if (journalDue.length > 0) {
-                var firstJ = journalDue[0];
-                var dpJ = firstJ.isoDate.split('-');
-                var extraJ = journalDue.length > 1 ? ' (và ' + (journalDue.length - 1) + ' buổi khác chưa ghi)' : '';
-                cards.push(acBuildCard({
-                    icon: '📝', title: 'Chưa ghi nhật ký',
-                    lines: [
-                        '<strong>' + escapeHtml(firstJ.student.name || '') + '</strong>' + extraJ,
-                        'Buổi học ' + dpJ[2] + '/' + dpJ[1] + (firstJ.startTime ? ' · ' + escapeHtml(firstJ.startTime) : '')
-                    ],
-                    ctaLabel: 'Ghi nhật ký', accentColor: '#f59e0b',
-                    onClick: function() { openLessonDetailModal(firstJ.student, firstJ.isoDate, firstJ.dayName, true); }
-                }));
-            }
 
             // ---- C. OUTSTANDING PAYMENT (group nếu nhiều) ----
             var paymentDue = acGetOutstandingPaymentItems(now);
@@ -1476,7 +1472,7 @@
             }, 150); // realtime nhưng debounce nhẹ để không giật khi gõ nhanh
         }
 
-        // Đặt lại cài đặt (mục 12) — CHỈ reset preference local (compact/journalReminder/defaultDuration/
+        // Đặt lại cài đặt (mục 12) — CHỈ reset preference local (compact/defaultDuration/
         // weekStart/bio) + theme về mặc định. KHÔNG đụng tới students/lessons/payments/schedule/account/
         // Supabase data. Confirm 2 bước theo đúng yêu cầu.
         function settingsResetToDefaults() {
@@ -1528,7 +1524,6 @@
 
             updateSettingsThemeButtons();
             document.getElementById('settings-compact-toggle').checked = !!s.compact;
-            document.getElementById('settings-journal-reminder-toggle').checked = s.journalReminder !== false;
             document.getElementById('settings-default-duration').value = s.defaultDuration || '2';
             document.getElementById('settings-week-start').value = s.weekStart || '1';
 
@@ -1714,10 +1709,7 @@
             var icon = TODAYS_WORK_ICON[item.status] || TODAYS_WORK_ICON.scheduled;
             var pillColor = item.status === 'completed' ? '#10b981' : item.status === 'cancelled' ? '#ef4444' : item.status === 'absent' ? '#f59e0b' : 'var(--text-sub)';
             var canComplete = item.status !== 'completed' && item.status !== 'cancelled';
-            // Mục 12: completed nhưng chưa có nhật ký -> thêm quick action "📝 Thêm nhật ký" mở thẳng
-            // vào edit mode của modal hiện có (KHÔNG tạo modal mới, xem openLessonDetailModal(...,true)).
-            var journal = item.status === 'completed' ? parseLessonJournal(item.lesson ? item.lesson.notes : '') : null;
-            var needsJournal = !!journal && !(journal.content || journal.feedback || journal.homework);
+            var canReport = item.status === 'completed' && item.lesson && item.lesson.id;
 
             var dateParts = item.isoDate.split('-');
             var dateHtml = showDate ? '<div class="tw-card-date">' + escapeHtml(item.dayName) + ' - ' + dateParts[2] + '/' + dateParts[1] + '</div>' : '';
@@ -1734,7 +1726,7 @@
                 + '<span class="tw-status-pill" style="color:' + pillColor + '">' + icon + ' ' + escapeHtml(meta.label) + '</span>'
                 + '<div class="tw-card-side-btns">'
                 + (canComplete ? '<button type="button" class="tw-complete-btn">✓ Hoàn thành</button>' : '')
-                + (needsJournal ? '<button type="button" class="tw-journal-btn" style="color:#f59e0b;">📝 Thêm nhật ký</button>' : '')
+                + (canReport ? '<button type="button" class="tw-report-btn">Báo cáo</button>' : '')
                 + '<button type="button" class="tw-view-btn">Xem buổi học</button>'
                 + '</div>'
                 + '</div>';
@@ -1753,11 +1745,29 @@
                 });
             }
 
-            var journalBtn = card.querySelector('.tw-journal-btn');
-            if (journalBtn) {
-                journalBtn.addEventListener('click', function() {
-                    openLessonDetailModal(c, item.isoDate, item.dayName, true);
+            var reportBtn = card.querySelector('.tw-report-btn');
+            if (reportBtn) {
+                var reportContext = {
+                    source_type: 'lesson',
+                    tutor_id: window.activeTutorId,
+                    student_id: c.id,
+                    lesson_id: item.lesson.id,
+                    session_date: item.isoDate,
+                    student_name: c.name,
+                    subject: c.subject,
+                    session_label: timeText
+                };
+                reportBtn.addEventListener('click', function() {
+                    if (window.openSessionReportForm) window.openSessionReportForm(reportContext);
                 });
+                if (window.getSessionReportByLesson) {
+                    window.getSessionReportByLesson(item.lesson.id).then(function(result) {
+                        if (!result.error && result.data) {
+                            reportBtn.innerText = result.data.status === 'submitted' ? 'Đã báo cáo' : 'Báo cáo nháp';
+                            reportBtn.classList.toggle('tw-report-btn-submitted', result.data.status === 'submitted');
+                        }
+                    }).catch(function() { /* Keep the default action label when status lookup fails. */ });
+                }
             }
 
             card.querySelector('.tw-view-btn').addEventListener('click', function() {
@@ -2830,29 +2840,26 @@
         // ================================================================================
         // ===== STUDENT PROFILE 2.0 — module mới, DERIVE toàn bộ dữ liệu từ cache đã có sẵn
         // (lessonsCacheByStudent/paymentsCacheByStudent/scheduleRowsCacheByStudent), KHÔNG gọi thêm
-        // Supabase khi render (đúng mục PERFORMANCE), KHÔNG tạo Lesson Detail/Journal editor thứ hai
-        // (mọi thao tác mở/sửa nhật ký đều gọi lại openLessonDetailModal() đã có).
+        // Supabase khi render (đúng mục PERFORMANCE), KHÔNG tạo Lesson Detail modal thứ hai
+        // (mọi thao tác mở buổi học đều gọi lại openLessonDetailModal() đã có).
         // ================================================================================
         var spCurrentTab = 'overview';
         var spHistoryFilterState = 'all';
         var spHistorySearchState = '';
-        var spJournalFilterState = 'all';
-        var spJournalSearchState = '';
-        var spJournalMonthState = 'all';
 
         function getActiveProfileStudent() {
             return classList.find(function(c) { return c.id === activeProfileClassId; });
         }
 
         // Điểm vào DUY NHẤT để vẽ lại toàn bộ phần Student Profile 2.0 — gọi sau mỗi lần dữ liệu
-        // lessons/payments thay đổi (đổi status, lưu nhật ký, ghi/xóa thanh toán, đổi tháng xem).
+        // lessons/payments thay đổi (đổi status, ghi/xóa thanh toán, đổi tháng xem).
         function refreshStudentProfileExtras(student) {
             if (!student) return;
             renderStudentHero(student);
             renderStudentKPIs(student);
             renderOverviewTab(student);
             renderStudentHistoryTab(student);
-            renderStudentJournalTab(student);
+            renderStudentReportsTab(student);
             renderStudentProgressTab(student);
         }
 
@@ -2861,11 +2868,401 @@
             document.querySelectorAll('.sp-tab-btn').forEach(function(b) {
                 b.classList.toggle('active', b.getAttribute('data-sp-tab') === tab);
             });
-            ['overview', 'history', 'journal', 'progress', 'tuition'].forEach(function(t) {
+            ['overview', 'history', 'reports', 'progress', 'tuition'].forEach(function(t) {
                 var panel = document.getElementById('sp-tab-' + t);
                 if (panel) panel.style.display = (t === tab) ? 'block' : 'none';
             });
         }
+
+        async function renderStudentReportsTab(student) {
+            var box = document.getElementById('sp-session-reports-list');
+            if (!box || !student) return;
+            box.innerHTML = '<div class="sp-empty-state">Đang tải báo cáo...</div>';
+            if (!window.getSessionReportsByStudent) {
+                box.innerHTML = '<div class="sp-empty-state">Chưa sẵn sàng tải báo cáo.</div>';
+                return;
+            }
+
+            var result = await window.getSessionReportsByStudent(student.id);
+            if (result.error) {
+                box.innerHTML = '<div class="sp-empty-state">Không thể tải báo cáo.</div>';
+                return;
+            }
+            var reports = result.data || [];
+            if (!reports.length) {
+                box.innerHTML = '<div class="sp-empty-state">Chưa có báo cáo học tập nào.</div>';
+                return;
+            }
+
+            box.innerHTML = reports.map(function(report) {
+                var isGroup = report.source_type === 'group_session';
+                var statusLabel = report.status === 'submitted' ? 'Đã báo cáo' : 'Nháp';
+                var contextLabel = isGroup ? 'Lớp nhóm' : (student.subject || 'Buổi 1-1');
+                var preview = (report.content || '').trim();
+                if (preview.length > 160) preview = preview.slice(0, 157) + '...';
+                var dateLabel = report.session_date ? formatDate(report.session_date) : '—';
+                return '<button type="button" class="sp-session-report-card" data-session-report-id="' + escapeHtml(report.id) + '">' +
+                    '<div class="sp-session-report-card-head">' +
+                        '<span class="sp-session-report-date">' + escapeHtml(dateLabel) + '</span>' +
+                        '<span class="sp-session-report-status ' + (report.status === 'submitted' ? 'is-submitted' : 'is-draft') + '">' + escapeHtml(statusLabel) + '</span>' +
+                    '</div>' +
+                    '<div class="sp-session-report-context">' + escapeHtml(contextLabel) + '</div>' +
+                    '<div class="sp-session-report-preview">' + escapeHtml(preview || 'Chưa có nội dung.') + '</div>' +
+                '</button>';
+            }).join('');
+
+            box.querySelectorAll('[data-session-report-id]').forEach(function(card) {
+                card.addEventListener('click', function() {
+                    var report = reports.find(function(item) { return item.id === card.getAttribute('data-session-report-id'); });
+                    if (!report || !window.openSessionReportForm) return;
+                    window.openSessionReportForm({
+                        source_type: report.source_type,
+                        tutor_id: report.tutor_id,
+                        student_id: report.student_id,
+                        lesson_id: report.lesson_id,
+                        group_session_id: report.group_session_id,
+                        attendance_id: report.attendance_id,
+                        session_date: report.session_date,
+                        student_name: student.name,
+                        subject: student.subject,
+                        session_label: report.source_type === 'group_session' ? 'Lớp nhóm' : 'Buổi 1-1'
+                    });
+                });
+            });
+        }
+
+        window.renderStudentReportsTab = renderStudentReportsTab;
+        window.refreshActiveStudentReports = function() {
+            var student = getActiveProfileStudent();
+            if (student) renderStudentReportsTab(student);
+        };
+
+        // ================================================================================
+        // ===== WEEKLY REPORT v1 (Báo cáo tuần gửi phụ huynh) — TÁI SỬ DỤNG
+        // getSessionReportsByStudent(studentId, {status, fromDate, toDate}) đã có sẵn (Session Report
+        // v1 data layer), KHÔNG tạo bảng/Supabase query mới, KHÔNG đổi hành vi Session Report hiện có.
+        // Chỉ gộp báo cáo status='submitted' — báo cáo nháp KHÔNG xuất hiện trong báo cáo phụ huynh.
+        // Tổng số giờ derive từ lessonsCacheByStudent đã nạp sẵn cho Student Profile (khớp lesson_id),
+        // KHÔNG gọi thêm query nào cho việc này (đúng nguyên tắc tránh N+1).
+        // ================================================================================
+        var activeWeeklyReport = null;
+
+        // Khoảng Thứ 2 - Chủ Nhật của TUẦN CHỨA dateStr (cùng thuật toán với spWeekRange(), nhưng neo
+        // theo ngày được chọn thay vì "hôm nay" — spWeekRange() không dùng được thẳng ở đây).
+        function wrWeekRangeForDate(dateStr) {
+            var base = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+            if (isNaN(base.getTime())) base = new Date();
+            var dow = (base.getDay() + 6) % 7; // 0 = Thứ 2
+            var monday = new Date(base.getFullYear(), base.getMonth(), base.getDate() - dow);
+            var sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+            return { start: getLocalIsoDate(monday), end: getLocalIsoDate(sunday) };
+        }
+
+        function wrSessionLabel(report) {
+            return report.source_type === 'group_session' ? 'Lớp nhóm' : 'Buổi 1-1';
+        }
+
+        // Chuỗi HTML cho MỘT buổi báo cáo (dùng chung cho preview trong app VÀ file xuất HTML).
+        function wrSessionBlockHtml(report, student) {
+            var fields = [
+                ['Nội dung đã học', report.content],
+                ['Mức độ tiếp thu', report.assessment],
+                ['Điểm mạnh', report.strengths],
+                ['Cần cải thiện', report.improvements],
+                ['Bài tập về nhà', report.homework],
+                ['Nhận xét cho phụ huynh', report.parent_note],
+                ['Định hướng buổi tới', report.next_focus]
+            ];
+            var fieldsHtml = fields.filter(function(f) { return f[1]; }).map(function(f) {
+                return '<div class="wr-session-field"><strong>' + escapeHtml(f[0]) + ':</strong> ' + escapeHtml(f[1]) + '</div>';
+            }).join('');
+            var context = report.source_type === 'group_session' ? 'Lớp nhóm' : (student.subject || 'Buổi 1-1');
+            return '<div class="wr-session-block">'
+                + '<div class="wr-session-head"><span>' + escapeHtml(formatDate(report.session_date)) + ' · ' + escapeHtml(context) + '</span></div>'
+                + fieldsHtml
+                + '</div>';
+        }
+
+        // ===== WEEKLY REPORT V2 — PHẦN TỔNG KẾT TUẦN (đặt TRƯỚC danh sách từng buổi) =====
+        // Toàn bộ dữ liệu suy ra TỪ CHÍNH danh sách "reports" đã lọc status='submitted' trong tuần
+        // (không gọi thêm Supabase, không đổi Session Report V1 / logic 1-1 / Group Class).
+        function wrCollectUnique(reports, field) {
+            var seen = {};
+            var out = [];
+            reports.forEach(function(r) {
+                var v = (r[field] || '').trim();
+                if (v && !seen[v]) { seen[v] = true; out.push({ date: r.session_date, text: v }); }
+            });
+            return out;
+        }
+
+        function wrBuildWeeklySummary(reports) {
+            var highlights = reports
+                .map(function(r) { return { date: r.session_date, text: (r.content || '').trim() }; })
+                .filter(function(h) { return h.text; });
+
+            var assessmentTally = {};
+            reports.forEach(function(r) {
+                var v = (r.assessment || '').trim();
+                if (v) assessmentTally[v] = (assessmentTally[v] || 0) + 1;
+            });
+
+            // Định hướng tuần tới: lấy next_focus của buổi GẦN NHẤT có giá trị — reports đã được sắp
+            // xếp tăng dần theo ngày ở generateWeeklyReport(), nên duyệt ngược để tìm buổi mới nhất.
+            var nextFocus = null;
+            for (var i = reports.length - 1; i >= 0; i--) {
+                var v = (reports[i].next_focus || '').trim();
+                if (v) { nextFocus = v; break; }
+            }
+
+            return {
+                highlights: highlights,
+                assessmentTally: assessmentTally,
+                strengths: wrCollectUnique(reports, 'strengths'),
+                improvements: wrCollectUnique(reports, 'improvements'),
+                homework: wrCollectUnique(reports, 'homework'),
+                parentNotes: wrCollectUnique(reports, 'parent_note'),
+                nextFocus: nextFocus
+            };
+        }
+
+        function wrBulletListHtml(items, emptyText) {
+            if (!items.length) return '<div class="wr-summary-empty">' + escapeHtml(emptyText) + '</div>';
+            return '<ul class="wr-bullet-list">' + items.map(function(it) {
+                return '<li><span class="wr-bullet-date">' + escapeHtml(formatDate(it.date)) + '</span> ' + escapeHtml(it.text) + '</li>';
+            }).join('') + '</ul>';
+        }
+
+        function wrAssessmentTallyHtml(tally) {
+            var keys = Object.keys(tally);
+            if (!keys.length) return '<div class="wr-summary-empty">Chưa có đánh giá mức độ tiếp thu.</div>';
+            return '<div class="wr-tally-row">' + keys.map(function(k) {
+                return '<span class="wr-tally-chip">' + escapeHtml(k) + ': ' + tally[k] + '</span>';
+            }).join('') + '</div>';
+        }
+
+        // Khối tổng kết tuần (mục 2-8 của Weekly Report V2) — DÙNG CHUNG cho preview trong app VÀ file
+        // xuất HTML, giống nguyên tắc của wrSessionBlockHtml() với danh sách từng buổi.
+        function wrWeeklySummaryHtml(summary) {
+            return '<div class="wr-summary-block">'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">📝 Nội dung đã học nổi bật</div>' + wrBulletListHtml(summary.highlights, 'Chưa có nội dung.') + '</div>'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">📊 Mức độ tiếp thu</div>' + wrAssessmentTallyHtml(summary.assessmentTally) + '</div>'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">💪 Điểm mạnh</div>' + wrBulletListHtml(summary.strengths, 'Chưa ghi nhận điểm mạnh nổi bật.') + '</div>'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">🎯 Cần cải thiện</div>' + wrBulletListHtml(summary.improvements, 'Chưa ghi nhận điểm cần cải thiện.') + '</div>'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">📚 Bài tập về nhà</div>' + wrBulletListHtml(summary.homework, 'Không có bài tập về nhà trong tuần.') + '</div>'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">💬 Nhận xét cho phụ huynh</div>' + wrBulletListHtml(summary.parentNotes, 'Chưa có nhận xét cho phụ huynh.') + '</div>'
+                + '<div class="wr-summary-section"><div class="wr-summary-title">🔭 Định hướng tuần tới</div>'
+                + (summary.nextFocus ? '<div class="wr-summary-text">' + escapeHtml(summary.nextFocus) + '</div>' : '<div class="wr-summary-empty">Chưa xác định định hướng tuần tới.</div>')
+                + '</div>'
+                + '</div>';
+        }
+
+        async function generateWeeklyReport() {
+            var student = getActiveProfileStudent();
+            var box = document.getElementById('wr-preview-box');
+            var exportBtn = document.getElementById('wr-export-btn');
+            if (!box || !student) return;
+
+            activeWeeklyReport = null;
+            if (exportBtn) exportBtn.style.display = 'none';
+
+            var pickInput = document.getElementById('wr-pick-date');
+            var pickedDate = (pickInput && pickInput.value) || getLocalIsoDate(new Date());
+            if (pickInput && !pickInput.value) pickInput.value = pickedDate;
+            var range = wrWeekRangeForDate(pickedDate);
+
+            box.innerHTML = '<div class="sp-empty-state">Đang tải báo cáo tuần...</div>';
+
+            if (!window.getSessionReportsByStudent) {
+                box.innerHTML = '<div class="sp-empty-state">Chưa sẵn sàng tải báo cáo.</div>';
+                return;
+            }
+
+            var result = await window.getSessionReportsByStudent(student.id, {
+                status: 'submitted',
+                fromDate: range.start,
+                toDate: range.end
+            });
+            if (result.error) {
+                box.innerHTML = '<div class="sp-empty-state">Không thể tải báo cáo tuần.</div>';
+                return;
+            }
+
+            // Trình bày báo cáo tuần theo trình tự thời gian (cũ → mới), khác thứ tự "mới nhất trước"
+            // của danh sách lịch sử phía trên — phù hợp hơn cho tường thuật một tuần học.
+            var reports = (result.data || []).slice().sort(function(a, b) {
+                return (a.session_date || '').localeCompare(b.session_date || '');
+            });
+
+            var lessonCache = lessonsCacheByStudent[student.id] || [];
+
+            // group_sessions.duration lưu theo PHÚT (khác lessons.duration lưu theo GIỜ — xem ghi chú
+            // đơn vị PHÚT ở js/calendar/calendar.js:206). Lấy MỘT LẦN theo danh sách group_session_id
+            // xuất hiện trong tuần (KHÔNG query riêng từng report — vẫn tránh N+1), rồi chia /60 khi
+            // cộng vào totalHours để tổng giờ luôn đúng đơn vị GIỜ.
+            var groupSessionIds = Array.from(new Set(
+                reports
+                    .filter(function(r) { return r.source_type === 'group_session' && r.group_session_id; })
+                    .map(function(r) { return r.group_session_id; })
+            ));
+            var groupSessionDurationById = {};
+            if (groupSessionIds.length) {
+                var gsResult = await supabaseClient.from('group_sessions').select('id, duration').in('id', groupSessionIds);
+                if (!gsResult.error && gsResult.data) {
+                    gsResult.data.forEach(function(gs) { groupSessionDurationById[gs.id] = gs.duration; });
+                }
+            }
+
+            var totalHours = 0;
+            var hasUntimedSession = false;
+            reports.forEach(function(r) {
+                if (r.source_type === 'lesson') {
+                    var lesson = lessonCache.find(function(l) { return l.id === r.lesson_id; });
+                    if (lesson && lesson.duration != null) totalHours += Number(lesson.duration) || 0; // lessons.duration: GIỜ
+                    else hasUntimedSession = true;
+                } else if (r.source_type === 'group_session') {
+                    var gsDuration = groupSessionDurationById[r.group_session_id];
+                    if (gsDuration != null) totalHours += (Number(gsDuration) || 0) / 60; // group_sessions.duration: PHÚT -> GIỜ
+                    else hasUntimedSession = true;
+                } else {
+                    hasUntimedSession = true;
+                }
+            });
+
+            var groupCount = reports.filter(function(r) { return r.source_type === 'group_session'; }).length;
+            var oneOnOneCount = reports.length - groupCount;
+            var contextParts = [];
+            if (oneOnOneCount > 0) contextParts.push(student.subject || 'Buổi 1-1');
+            if (groupCount > 0) contextParts.push('Lớp nhóm');
+            var contextLabel = contextParts.length ? contextParts.join(' · ') : (student.subject || '—');
+
+            // Điểm danh: session_reports không lưu trạng thái điểm danh trực tiếp, nhưng trigger DB đã
+            // đảm bảo báo cáo lớp nhóm submitted CHỈ tồn tại khi điểm danh present/late (session_reports_v1.sql),
+            // nên có thể tóm tắt mà KHÔNG cần thêm query. Với buổi 1-1 không có khái niệm điểm danh riêng
+            // nên phần này CHỈ hiển thị "khi có" (when available) buổi lớp nhóm trong tuần.
+            var attendanceSummary = groupCount > 0
+                ? groupCount + ' buổi lớp nhóm đã điểm danh có mặt/đi trễ'
+                : null;
+
+            activeWeeklyReport = {
+                student: student,
+                range: range,
+                reports: reports,
+                totalHours: totalHours,
+                hasUntimedSession: hasUntimedSession,
+                contextLabel: contextLabel,
+                attendanceSummary: attendanceSummary
+            };
+
+            box.innerHTML = wrRenderPreview(activeWeeklyReport);
+            if (exportBtn) exportBtn.style.display = '';
+        }
+
+        function wrRenderPreview(data) {
+            var metaHtml = '<div class="wr-summary-title">🧭 Tổng quan tuần</div>'
+                + '<div class="wr-meta-row">'
+                + '<div class="wr-meta-item"><div class="lbl">Học sinh</div><div class="val">' + escapeHtml(data.student.name) + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Môn học / Lớp</div><div class="val">' + escapeHtml(data.contextLabel) + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Tuần</div><div class="val" style="font-size:13px;">' + escapeHtml(formatDate(data.range.start)) + ' – ' + escapeHtml(formatDate(data.range.end)) + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Số buổi</div><div class="val">' + data.reports.length + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Tổng số giờ</div><div class="val">' + (data.totalHours > 0 ? data.totalHours.toLocaleString('vi-VN') + ' giờ' : '—') + (data.hasUntimedSession ? '*' : '') + '</div></div>'
+                + '</div>';
+            var attendanceHtml = data.attendanceSummary
+                ? '<div class="wr-session-field" style="margin-bottom:12px;"><strong>Điểm danh:</strong> ' + escapeHtml(data.attendanceSummary) + '</div>'
+                : '';
+            var noteHtml = data.hasUntimedSession
+                ? '<div class="wr-session-field" style="margin-bottom:12px;">*Một số buổi chưa có dữ liệu thời lượng nên chưa tính vào tổng số giờ.</div>'
+                : '';
+
+            if (!data.reports.length) {
+                return metaHtml + '<div class="sp-empty-state">Không có báo cáo đã hoàn thành nào trong tuần này.</div>';
+            }
+
+            // Weekly Report V2: khối tổng kết tuần (mục 2-8) đặt TRƯỚC danh sách từng buổi.
+            var summaryHtml = wrWeeklySummaryHtml(wrBuildWeeklySummary(data.reports));
+            var sessionsHtml = data.reports.map(function(r) { return wrSessionBlockHtml(r, data.student); }).join('');
+            return metaHtml + attendanceHtml + noteHtml + summaryHtml + sessionsHtml;
+        }
+
+        window.generateWeeklyReport = generateWeeklyReport;
+
+        // ---- XUẤT HTML BÁO CÁO TUẦN (A4, in được, UTF-8 tiếng Việt) ----
+        function exportWeeklyReportHtml() {
+            if (!activeWeeklyReport) return;
+            var data = activeWeeklyReport;
+            var now = new Date();
+            var dateStr = now.toLocaleDateString('vi-VN');
+
+            // Weekly Report V2: khối tổng kết tuần (mục 2-8) đặt TRƯỚC danh sách từng buổi.
+            var summaryHtml = data.reports.length ? wrWeeklySummaryHtml(wrBuildWeeklySummary(data.reports)) : '';
+            var sessionsHtml = data.reports.length
+                ? data.reports.map(function(r) { return wrSessionBlockHtml(r, data.student); }).join('')
+                : '<div class="wr-empty">Không có báo cáo đã hoàn thành nào trong tuần này.</div>';
+            var attendanceHtml = data.attendanceSummary
+                ? '<div class="wr-note"><strong>Điểm danh:</strong> ' + escapeHtml(data.attendanceSummary) + '</div>'
+                : '';
+            var hoursNote = data.hasUntimedSession
+                ? '<div class="wr-note">*Một số buổi chưa có dữ liệu thời lượng nên chưa tính vào tổng số giờ.</div>'
+                : '';
+
+            var html = '<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">'
+                + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                + '<title>Báo cáo tuần – ' + escapeHtml(data.student.name) + '</title>'
+                + '<style>'
+                + '@page { size: A4; margin: 18mm 16mm; }'
+                + 'body{font-family:Arial,"Segoe UI",Helvetica,sans-serif;background:#f4f5f7;color:#1a1a2e;margin:0;padding:24px;}'
+                + '.wr-wrap{max-width:760px;margin:0 auto;background:#fff;border-radius:10px;box-shadow:0 2px 18px rgba(0,0,0,0.08);overflow:hidden;}'
+                + '.wr-header{background:#134e38;padding:28px 36px;}'
+                + '.wr-header h1{margin:0 0 4px;font-size:22px;color:#fff;font-weight:800;}'
+                + '.wr-header p{margin:0;font-size:13px;color:rgba(255,255,255,0.75);}'
+                + '.wr-body{padding:28px 36px;}'
+                + '.wr-meta-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:22px;}'
+                + '.wr-meta-item{flex:1;min-width:130px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;}'
+                + '.wr-meta-item .lbl{font-size:9.5px;font-weight:700;letter-spacing:.5px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;}'
+                + '.wr-meta-item .val{font-size:14px;font-weight:800;color:#1a1a2e;}'
+                + '.wr-note{font-size:11.5px;color:#6b7280;margin-bottom:14px;}'
+                + '.wr-empty{padding:16px;text-align:center;color:#6b7280;font-size:13px;border:1px dashed #e5e7eb;border-radius:8px;}'
+                + '.wr-session-block{border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:12px;background:#fff;page-break-inside:avoid;}'
+                + '.wr-session-head{font-weight:700;font-size:13.5px;margin-bottom:8px;color:#134e38;border-bottom:1px solid #f0f0f0;padding-bottom:6px;}'
+                + '.wr-session-field{font-size:12.5px;color:#374151;margin-top:5px;line-height:1.5;}'
+                + '.wr-session-field strong{color:#111827;}'
+                + '.wr-summary-block{margin-bottom:18px;}'
+                + '.wr-summary-section{border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin-bottom:10px;background:#fbfcfe;page-break-inside:avoid;}'
+                + '.wr-summary-title{font-weight:700;font-size:13px;color:#134e38;margin-bottom:6px;}'
+                + '.wr-summary-text{font-size:12.5px;color:#374151;line-height:1.5;}'
+                + '.wr-summary-empty{font-size:12px;color:#9ca3af;font-style:italic;}'
+                + '.wr-bullet-list{margin:0;padding-left:18px;}'
+                + '.wr-bullet-list li{font-size:12.5px;color:#374151;margin-bottom:4px;line-height:1.5;}'
+                + '.wr-bullet-date{font-size:11px;color:#6b7280;font-weight:700;margin-right:4px;}'
+                + '.wr-tally-row{display:flex;gap:8px;flex-wrap:wrap;}'
+                + '.wr-tally-chip{background:#eef2ff;color:#3730a3;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;}'
+                + '.wr-footer{background:#f8fafc;border-top:1px solid #e5e7eb;padding:16px 36px;font-size:11px;color:#9ca3af;display:flex;justify-content:space-between;}'
+                + '@media print{body{background:#fff;padding:0;}.wr-wrap{box-shadow:none;border-radius:0;max-width:none;}}'
+                + '</style>'
+                + '</head><body><div class="wr-wrap">'
+                + '<div class="wr-header"><h1>📋 Báo cáo tuần học tập</h1><p>Tuần ' + escapeHtml(formatDate(data.range.start)) + ' – ' + escapeHtml(formatDate(data.range.end)) + ' · GiaSu Manager Pro</p></div>'
+                + '<div class="wr-body">'
+                + '<div class="wr-meta-row">'
+                + '<div class="wr-meta-item"><div class="lbl">Học sinh</div><div class="val">' + escapeHtml(data.student.name) + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Môn học / Lớp</div><div class="val">' + escapeHtml(data.contextLabel) + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Số buổi</div><div class="val">' + data.reports.length + '</div></div>'
+                + '<div class="wr-meta-item"><div class="lbl">Tổng số giờ</div><div class="val">' + (data.totalHours > 0 ? data.totalHours.toLocaleString('vi-VN') + ' giờ' : '—') + (data.hasUntimedSession ? '*' : '') + '</div></div>'
+                + '</div>'
+                + attendanceHtml + hoursNote
+                + summaryHtml
+                + sessionsHtml
+                + '</div>'
+                + '<div class="wr-footer"><span>GiaSu Manager Pro · Báo cáo tự động</span><span>Xuất ngày ' + dateStr + '</span></div>'
+                + '</div></bo' + 'dy></ht' + 'ml>';
+
+            var blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'BaoCao_Tuan_' + data.student.name.replace(/\s+/g, '_') + '_' + data.range.start + '_' + data.range.end + '.html';
+            a.click();
+        }
+
+        window.exportWeeklyReportHtml = exportWeeklyReportHtml;
 
         // Tìm buổi học TƯƠNG LAI gần nhất (status scheduled, ngày+giờ >= hiện tại). Nếu không có lesson
         // nào trong tương lai, fallback sang student_schedules (lịch cố định) để TÍNH lịch dự kiến —
@@ -2929,15 +3326,13 @@
         function computeStudentStats(student) {
             var cache = lessonsCacheByStudent[student.id] || [];
             var total = cache.length;
-            var completed = 0, cancelled = 0, absent = 0, scheduled = 0, journalDone = 0;
+            var completed = 0, cancelled = 0, absent = 0, scheduled = 0;
             var thisMonth = getLocalIsoDate(new Date()).slice(0, 7);
             var tuitionThisMonth = 0;
             var rateVnd = (Number(student.rate) || 0) * 1000;
             cache.forEach(function(l) {
                 if (l.status === 'completed') {
                     completed++;
-                    var j = parseLessonJournal(l.notes);
-                    if (j.content || j.feedback || j.homework) journalDone++;
                     if (l.scheduled_date && l.scheduled_date.slice(0, 7) === thisMonth) tuitionThisMonth += rateVnd;
                 } else if (l.status === 'cancelled') cancelled++;
                 else if (l.status === 'absent') absent++;
@@ -2947,37 +3342,13 @@
             var attendanceRate = concluded > 0 ? Math.round((completed / concluded) * 1000) / 10 : null;
             return {
                 total: total, completed: completed, cancelled: cancelled, absent: absent, scheduled: scheduled,
-                journalDone: journalDone, attendanceRate: attendanceRate, tuitionThisMonth: tuitionThisMonth
-            };
-        }
-
-        // Journal Center 2.0 (mục 11): thống kê nhật ký học tập của MỘT học sinh, derive HOÀN TOÀN từ
-        // lessonsCacheByStudent (KHÔNG gọi Supabase). Journal được tính là "có" nếu content OR feedback
-        // OR homework có dữ liệu (đúng mục 7). Dùng chung cho KPI row của Journal Center.
-        function getStudentJournalStats(student) {
-            var cache = (student && lessonsCacheByStudent[student.id]) || [];
-            var totalLessons = cache.length;
-            var completedLessons = 0, journalCount = 0, missingJournalCount = 0, homeworkCount = 0, feedbackCount = 0;
-            cache.forEach(function(l) {
-                if (l.status !== 'completed') return;
-                completedLessons++;
-                var j = parseLessonJournal(l.notes);
-                var hasJournal = !!((j.content && j.content.trim()) || (j.feedback && j.feedback.trim()) || (j.homework && j.homework.trim()));
-                if (hasJournal) journalCount++; else missingJournalCount++;
-                if (j.homework && j.homework.trim()) homeworkCount++;
-                if (j.feedback && j.feedback.trim()) feedbackCount++;
-            });
-            var completionRate = completedLessons > 0 ? Math.round((journalCount / completedLessons) * 1000) / 10 : null;
-            return {
-                totalLessons: totalLessons, completedLessons: completedLessons, journalCount: journalCount,
-                missingJournalCount: missingJournalCount, homeworkCount: homeworkCount, feedbackCount: feedbackCount,
-                completionRate: completionRate
+                attendanceRate: attendanceRate, tuitionThisMonth: tuitionThisMonth
             };
         }
 
         function renderStudentKPIs(student) {
             if (!student._supabaseSource) {
-                ['sp-kpi-total','sp-kpi-completed','sp-kpi-journal','sp-kpi-attendance','sp-kpi-tuition'].forEach(function(id) {
+                ['sp-kpi-total','sp-kpi-completed','sp-kpi-attendance','sp-kpi-tuition'].forEach(function(id) {
                     var el = document.getElementById(id); if (el) el.innerText = '—';
                 });
                 return;
@@ -2985,7 +3356,6 @@
             var s = computeStudentStats(student);
             document.getElementById('sp-kpi-total').innerText = s.total;
             document.getElementById('sp-kpi-completed').innerText = s.completed;
-            document.getElementById('sp-kpi-journal').innerText = s.completed > 0 ? (s.journalDone + ' / ' + s.completed) : '—';
             document.getElementById('sp-kpi-attendance').innerText = s.attendanceRate === null ? '—' : (s.attendanceRate + '%');
             document.getElementById('sp-kpi-tuition').innerText = s.tuitionThisMonth.toLocaleString('vi-VN') + 'đ';
         }
@@ -3001,29 +3371,14 @@
             return p[2] + '/' + p[1];
         }
 
-        // "Thêm nhật ký mới" trên header (mục 2): mở đúng openLessonDetailModal() đã có, focus vào ô
-        // nhật ký, cho buổi học TƯƠNG LAI gần nhất nếu có, hoặc buổi COMPLETED gần nhất chưa có journal.
-        function spOpenNextLessonJournal() {
-            var student = getActiveProfileStudent();
-            if (!student) return;
-            var cache = (lessonsCacheByStudent[student.id] || []).slice().sort(function(a, b) {
-                return (b.scheduled_date + (b.start_time || '')).localeCompare(a.scheduled_date + (a.start_time || ''));
-            });
-            var target = cache.find(function(l) { return l.status === 'completed'; });
-            if (!target) { showToast('ℹ️', 'Chưa có buổi học nào để ghi nhật ký', ''); return; }
-            var dayName = DAY_NUMBER_TO_NAME[new Date(target.scheduled_date + 'T00:00:00').getDay()];
-            openLessonDetailModal(student, target.scheduled_date, dayName, true);
-        }
-
         function renderOverviewTab(student) {
             var nextBox = document.getElementById('sp-next-lesson-box');
             var actBox = document.getElementById('sp-recent-activity-box');
-            var hwBox = document.getElementById('sp-recent-homework-box');
-            if (!nextBox || !actBox || !hwBox) return;
+            if (!nextBox || !actBox) return;
 
             if (!student._supabaseSource) {
                 nextBox.innerHTML = spEmptyState('📚', 'Chưa có dữ liệu', 'Học sinh local (chưa liên kết Supabase) chưa có dữ liệu buổi học chi tiết.');
-                actBox.innerHTML = ''; hwBox.innerHTML = '';
+                actBox.innerHTML = '';
                 return;
             }
 
@@ -3056,33 +3411,12 @@
                 actBox.innerHTML = spEmptyState('📚', 'Chưa có buổi học', 'Lịch sử học tập sẽ xuất hiện sau buổi học đầu tiên.');
             } else {
                 actBox.innerHTML = cache.slice(0, 5).map(function(l) {
-                    var j = parseLessonJournal(l.notes);
-                    var hasJournal = !!(j.content || j.feedback || j.homework);
                     var dayName = DAY_NUMBER_TO_NAME[new Date(l.scheduled_date + 'T00:00:00').getDay()];
                     var meta = lessonStatusMeta[l.status] || lessonStatusMeta.scheduled;
-                    var journalTag = l.status === 'completed' ? (hasJournal ? '<span style="color:#10b981;">📝 Đã có journal</span>' : '<span style="color:#f59e0b;">⚠️ Chưa có journal</span>') : '';
                     return '<div class="sp-activity-item" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\')">'
                         + '<div class="sp-activity-date">' + spFormatLessonDate(l.scheduled_date) + '</div>'
                         + '<div class="sp-activity-mid">📚 ' + escapeHtml(student.subject || '') + '</div>'
-                        + '<div class="sp-activity-status">' + (lessonStatusIcon[l.status] || '') + ' ' + meta.label + (journalTag ? '<br>' + journalTag : '') + '</div>'
-                        + '</div>';
-                }).join('');
-            }
-
-            // ----- Bài tập gần đây (từ Lesson Journal, dùng parseLessonJournal()) -----
-            var withHomework = cache.filter(function(l) {
-                var j = parseLessonJournal(l.notes);
-                return j.homework && j.homework.trim();
-            });
-            if (!withHomework.length) {
-                hwBox.innerHTML = spEmptyState('📝', 'Chưa có bài tập', 'Bài tập giao qua Lesson Journal sẽ hiện ở đây.');
-            } else {
-                hwBox.innerHTML = withHomework.slice(0, 5).map(function(l) {
-                    var j = parseLessonJournal(l.notes);
-                    var dayName = DAY_NUMBER_TO_NAME[new Date(l.scheduled_date + 'T00:00:00').getDay()];
-                    return '<div class="sp-homework-item" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\')">'
-                        + '<div class="sp-activity-date">' + spFormatLessonDate(l.scheduled_date) + '</div>'
-                        + '<div class="sp-activity-mid">📌 ' + escapeHtml(j.homework.trim()) + '</div>'
+                        + '<div class="sp-activity-status">' + (lessonStatusIcon[l.status] || '') + ' ' + meta.label + '</div>'
                         + '</div>';
                 }).join('');
             }
@@ -3115,15 +3449,11 @@
 
             var q = (spHistorySearchState || '').trim().toLowerCase();
             var filtered = cache.filter(function(l) {
-                var j = parseLessonJournal(l.notes);
-                var hasJournal = !!(j.content || j.feedback || j.homework);
                 if (spHistoryFilterState === 'completed' && l.status !== 'completed') return false;
                 if (spHistoryFilterState === 'scheduled' && l.status !== 'scheduled') return false;
                 if (spHistoryFilterState === 'cancelled' && l.status !== 'cancelled') return false;
-                if (spHistoryFilterState === 'hasJournal' && !hasJournal) return false;
-                if (spHistoryFilterState === 'missingJournal' && (hasJournal || l.status !== 'completed')) return false;
                 if (q) {
-                    var hay = [l.scheduled_date, student.subject, j.content, j.feedback, j.homework].join(' ').toLowerCase();
+                    var hay = [l.scheduled_date, student.subject].join(' ').toLowerCase();
                     if (hay.indexOf(q) === -1) return false;
                 }
                 return true;
@@ -3135,8 +3465,6 @@
             }
 
             box.innerHTML = filtered.map(function(l) {
-                var j = parseLessonJournal(l.notes);
-                var hasJournal = !!(j.content || j.feedback || j.homework);
                 var dayName = DAY_NUMBER_TO_NAME[new Date(l.scheduled_date + 'T00:00:00').getDay()];
                 var dp = l.scheduled_date.split('-');
                 var meta = lessonStatusMeta[l.status] || lessonStatusMeta.scheduled;
@@ -3146,173 +3474,14 @@
                     var endMin = startMin + Math.round(Number(l.duration) * 60);
                     endTime = ' → ' + String(Math.floor(endMin / 60) % 24).padStart(2, '0') + ':' + String(endMin % 60).padStart(2, '0');
                 }
-                var journalHtml = '';
-                if (hasJournal) {
-                    if (j.content) journalHtml += '<div class="sp-timeline-journal-line">📝 <strong>Journal:</strong> ' + escapeHtml(j.content.slice(0, 140)) + (j.content.length > 140 ? '…' : '') + '</div>';
-                    if (j.feedback) journalHtml += '<div class="sp-timeline-journal-line">💬 <strong>Nhận xét:</strong> ' + escapeHtml(j.feedback.slice(0, 140)) + (j.feedback.length > 140 ? '…' : '') + '</div>';
-                    if (j.homework) journalHtml += '<div class="sp-timeline-journal-line">📌 <strong>Bài tập:</strong> ' + escapeHtml(j.homework.slice(0, 140)) + (j.homework.length > 140 ? '…' : '') + '</div>';
-                } else if (l.status === 'completed') {
-                    journalHtml = '<div class="sp-timeline-journal-line" style="color:#f59e0b;">⚠️ Chưa có journal</div>';
-                }
-                var actionBtn = l.status === 'completed' && !hasJournal
-                    ? '<button type="button" class="btn-secondary" style="padding:6px 12px;font-size:11.5px;" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\',true)">Thêm nhật ký</button>'
-                    : '<button type="button" class="btn-secondary" style="padding:6px 12px;font-size:11.5px;" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\')">Mở chi tiết</button>';
+                var actionBtn = '<button type="button" class="btn-secondary" style="padding:6px 12px;font-size:11.5px;" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\')">Mở chi tiết</button>';
                 return '<div class="sp-timeline-item">'
                     + '<div class="sp-timeline-top"><span class="sp-timeline-subject">📚 ' + escapeHtml(student.subject || '') + '</span>'
                     + '<span class="sp-timeline-time">' + dp[2] + '/' + dp[1] + '/' + dp[0] + ' · ' + (l.start_time || '—') + endTime + '</span></div>'
                     + '<div style="font-size:12px;font-weight:700;">' + (lessonStatusIcon[l.status] || '') + ' ' + meta.label + '</div>'
-                    + journalHtml
                     + '<div class="sp-timeline-actions">' + actionBtn + '</div>'
                     + '</div>';
             }).join('');
-        }
-
-        function spSetJournalFilter(f) {
-            spJournalFilterState = f;
-            document.querySelectorAll('#sp-journal-filter-row .sp-filter-btn').forEach(function(b) {
-                b.classList.toggle('active', b.getAttribute('data-sp-journal-filter') === f);
-            });
-            renderStudentJournalTab(getActiveProfileStudent());
-        }
-
-        function spSetJournalMonth(v) {
-            spJournalMonthState = v;
-            renderStudentJournalTab(getActiveProfileStudent());
-        }
-
-        // Populate <select id="sp-journal-month-select"> từ các tháng THẬT có lesson trong
-        // lessonsCacheByStudent (không hard-code danh sách tháng), giữ nguyên lựa chọn hiện tại nếu vẫn
-        // còn hợp lệ, để không tự động reset filter mỗi lần render lại (mục 13: real-time update).
-        function spBuildJournalMonthOptions(student) {
-            var sel = document.getElementById('sp-journal-month-select');
-            if (!sel) return;
-            var cache = (lessonsCacheByStudent[student.id] || []);
-            var months = {};
-            cache.forEach(function(l) { if (l.scheduled_date) months[l.scheduled_date.slice(0, 7)] = true; });
-            var sortedMonths = Object.keys(months).sort().reverse();
-            var prev = spJournalMonthState;
-            var options = '<option value="all">Tháng: Tất cả</option>' + sortedMonths.map(function(mk) {
-                var p = mk.split('-');
-                return '<option value="' + mk + '">Tháng ' + parseInt(p[1], 10) + '/' + p[0] + '</option>';
-            }).join('');
-            sel.innerHTML = options;
-            sel.value = sortedMonths.indexOf(prev) !== -1 || prev === 'all' ? prev : 'all';
-            if (sel.value !== prev) spJournalMonthState = sel.value;
-        }
-
-        // Journal Center 2.0 — KPI + search realtime + filter + filter tháng + timeline (mọi trạng thái
-        // lesson.status thật) + Bài tập gần đây. TẤT CẢ render từ lessonsCacheByStudent đã có sẵn trong
-        // bộ nhớ (KHÔNG gọi Supabase, KHÔNG loadStudentLessons() trong filter — đúng mục PERFORMANCE).
-        // Click 1 buổi luôn gọi lại openLessonDetailModal() đã có, KHÔNG tạo Journal editor thứ hai.
-        function renderStudentJournalTab(student) {
-            var box = document.getElementById('sp-journal-list-box');
-            var kpiRow = document.getElementById('sp-journal-kpi-row');
-            var hwBox = document.getElementById('sp-journal-homework-box');
-            if (!box || !student) return;
-
-            if (!student._supabaseSource) {
-                if (kpiRow) kpiRow.innerHTML = '';
-                box.innerHTML = spEmptyState('📝', 'Chưa có dữ liệu', 'Học sinh local chưa có dữ liệu nhật ký.');
-                if (hwBox) hwBox.innerHTML = '';
-                return;
-            }
-
-            // ----- KPI (mục 7) -----
-            var stats = getStudentJournalStats(student);
-            if (kpiRow) {
-                kpiRow.innerHTML = ''
-                    + '<div class="sp-progress-stat"><div class="sp-progress-stat-val">' + stats.journalCount + '</div><div class="sp-progress-stat-lbl">📝 Tổng nhật ký</div></div>'
-                    + '<div class="sp-progress-stat"><div class="sp-progress-stat-val" style="color:#10b981;">' + stats.completedLessons + '</div><div class="sp-progress-stat-lbl">✓ Hoàn thành</div></div>'
-                    + '<div class="sp-progress-stat"><div class="sp-progress-stat-val" style="color:#f59e0b;">' + stats.missingJournalCount + '</div><div class="sp-progress-stat-lbl">⚠️ Thiếu nhật ký</div></div>'
-                    + '<div class="sp-progress-stat"><div class="sp-progress-stat-val" style="color:#00cca3;">' + stats.homeworkCount + '</div><div class="sp-progress-stat-lbl">📌 Có bài tập</div></div>';
-            }
-
-            spBuildJournalMonthOptions(student);
-
-            var cache = (lessonsCacheByStudent[student.id] || []).slice().sort(function(a, b) {
-                return (b.scheduled_date + (b.start_time || '')).localeCompare(a.scheduled_date + (a.start_time || ''));
-            });
-
-            // ----- Search + filter + tháng (mục 3, 4) -----
-            var q = (spJournalSearchState || '').trim().toLowerCase();
-            var filtered = cache.filter(function(l) {
-                var j = parseLessonJournal(l.notes);
-                var hasJournal = !!((j.content && j.content.trim()) || (j.feedback && j.feedback.trim()) || (j.homework && j.homework.trim()));
-                if (spJournalMonthState !== 'all' && (!l.scheduled_date || l.scheduled_date.slice(0, 7) !== spJournalMonthState)) return false;
-                if (spJournalFilterState === 'hasJournal' && !hasJournal) return false;
-                if (spJournalFilterState === 'missing' && (hasJournal || l.status !== 'completed')) return false;
-                if (spJournalFilterState === 'hasHomework' && !(j.homework && j.homework.trim())) return false;
-                if (spJournalFilterState === 'hasFeedback' && !(j.feedback && j.feedback.trim())) return false;
-                if (q) {
-                    var hay = [l.scheduled_date, student.subject, j.content, j.feedback, j.homework].filter(Boolean).join(' ').toLowerCase();
-                    if (hay.indexOf(q) === -1) return false;
-                }
-                return true;
-            });
-
-            if (!cache.length) {
-                box.innerHTML = spEmptyState('📝', 'Chưa có nhật ký', 'Nhật ký học tập sẽ xuất hiện sau khi bạn ghi chú cho buổi học.');
-            } else if (!filtered.length) {
-                box.innerHTML = spEmptyState('🔍', 'Không tìm thấy', 'Không có nhật ký phù hợp với bộ lọc hiện tại.');
-            } else {
-                // ----- Timeline (mục 5, 6) — nhóm theo ngày, dùng lại lessonStatusMeta/Icon thật -----
-                box.innerHTML = filtered.map(function(l) {
-                    var j = parseLessonJournal(l.notes);
-                    var hasJournal = !!((j.content && j.content.trim()) || (j.feedback && j.feedback.trim()) || (j.homework && j.homework.trim()));
-                    var dayName = DAY_NUMBER_TO_NAME[new Date(l.scheduled_date + 'T00:00:00').getDay()];
-                    var dp = l.scheduled_date.split('-');
-                    var endTime = '';
-                    if (l.start_time && l.duration != null) {
-                        var hm = l.start_time.split(':'); var startMin = parseInt(hm[0]) * 60 + parseInt(hm[1] || 0);
-                        var endMin = startMin + Math.round(Number(l.duration) * 60);
-                        endTime = ' – ' + String(Math.floor(endMin / 60) % 24).padStart(2, '0') + ':' + String(endMin % 60).padStart(2, '0');
-                    }
-                    var journalStatusHtml;
-                    if (l.status === 'completed') {
-                        journalStatusHtml = hasJournal
-                            ? '<span style="color:#10b981;">✓ Đã có nhật ký</span>'
-                            : '<span style="color:#f59e0b;">⚠️ Chưa có nhật ký</span>';
-                    } else if (l.status === 'cancelled') {
-                        journalStatusHtml = '<span style="color:var(--text-sub);">✕ Đã huỷ</span>';
-                    } else {
-                        journalStatusHtml = '<span style="color:var(--text-sub);">⏳ Chưa học</span>';
-                    }
-                    var btnLabel = l.status === 'completed' && !hasJournal ? '📝 Thêm nhật ký' : (hasJournal ? '✏️ Sửa nhật ký' : 'Mở buổi học');
-                    var journalFieldsHtml = hasJournal
-                        ? '<div class="sp-journal-field">📖 <strong>Nội dung:</strong> ' + escapeHtml(j.content || '(Chưa có)') + '</div>'
-                        + '<div class="sp-journal-field">💬 <strong>Nhận xét:</strong> ' + escapeHtml(j.feedback || '(Chưa có)') + '</div>'
-                        + '<div class="sp-journal-field">📝 <strong>Bài tập:</strong> ' + escapeHtml(j.homework || '(Chưa có)') + '</div>'
-                        : '';
-                    return '<div class="sp-journal-item">'
-                        + '<div class="sp-journal-head"><span style="font-size:13px;font-weight:700;">📅 ' + dp[2] + '/' + dp[1] + '/' + dp[0] + ' · 📚 ' + escapeHtml(student.subject || '') + '</span>'
-                        + '<span style="font-size:11.5px;color:var(--text-sub);">' + (l.start_time || '—') + endTime + '</span></div>'
-                        + '<div style="font-size:12px;font-weight:700;margin-bottom:4px;">' + journalStatusHtml + '</div>'
-                        + journalFieldsHtml
-                        + '<div class="sp-timeline-actions"><button type="button" class="btn-secondary" style="padding:6px 12px;font-size:11.5px;" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\',' + (l.status === 'completed' && !hasJournal) + ')">' + btnLabel + '</button></div>'
-                        + '</div>';
-                }).join('');
-            }
-
-            // ----- Bài tập gần đây (mục 8) — lấy từ parseLessonJournal(lesson.notes).homework của các
-            // buổi completed, KHÔNG tạo bảng homework mới, click mở lại đúng Lesson Detail. -----
-            if (hwBox) {
-                var withHomework = cache.filter(function(l) {
-                    var j = parseLessonJournal(l.notes);
-                    return j.homework && j.homework.trim();
-                });
-                if (!withHomework.length) {
-                    hwBox.innerHTML = spEmptyState('📌', 'Chưa có bài tập', 'Bài tập ghi trong nhật ký sẽ hiện ở đây.');
-                } else {
-                    hwBox.innerHTML = withHomework.slice(0, 8).map(function(l) {
-                        var j = parseLessonJournal(l.notes);
-                        var dayName = DAY_NUMBER_TO_NAME[new Date(l.scheduled_date + 'T00:00:00').getDay()];
-                        return '<div class="sp-homework-item" onclick="openLessonDetailModal(getActiveProfileStudent(),\'' + l.scheduled_date + '\',\'' + dayName + '\')">'
-                            + '<div class="sp-activity-date">' + spFormatLessonDate(l.scheduled_date) + '</div>'
-                            + '<div class="sp-activity-mid">📝 ' + escapeHtml(j.homework.trim()) + ' <span style="color:var(--text-sub);">· ' + escapeHtml(student.subject || '') + '</span></div>'
-                            + '</div>';
-                    }).join('');
-                }
-            }
         }
 
         // Tab "Tiến độ" — thống kê + chart CSS đơn giản (không cần thư viện mới) + streak. Tất cả tính
@@ -3387,10 +3556,9 @@
             }
         }
 
-        // setLessonStatusForDate/removeLessonForDate, Nhật ký buổi học (parse/format/banner) và
-        // Lesson Detail Modal (open/close/render/sửa nhật ký) đã tách sang js/lessons/lessons.js
-        // (STEP 7D). Các hàm này vẫn accessible như global qua window.* (xem lessons.js) — không
-        // đổi cách gọi ở bất kỳ đâu khác trong file này.
+        // setLessonStatusForDate/removeLessonForDate và Lesson Detail Modal (open/close/render)
+        // đã tách sang js/lessons/lessons.js (STEP 7D). Các hàm này vẫn accessible như global qua
+        // window.* (xem lessons.js) — không đổi cách gọi ở bất kỳ đâu khác trong file này.
 
         // ================================================================
         // ===== MODULE public.payments (GIAO DỊCH HỌC PHÍ) =====
@@ -5195,7 +5363,7 @@
         // ===== PROGRESS & ANALYTICS 2.0 (Reports của Tutor — "📊 Báo cáo" / openTutorReports()) =====
         // Toàn bộ derive từ classList/lessonsCacheByStudent/paymentsCacheByStudent đã nạp sẵn trong
         // openFinanceDashboard() — KHÔNG gọi Supabase riêng cho từng card, tái sử dụng getMonthKey(),
-        // getPeriodTotalPaid(), computePeriodStatus(), parseLessonJournal(), money(), openProfilePage(),
+        // getPeriodTotalPaid(), computePeriodStatus(), money(), openProfilePage(),
         // switchStudentProfileTab() đã có. KHÔNG tạo bảng/database analytics mới.
         // ================================================================================
         var rptTutorPeriodMode = 'month'; // 'month' | '7d' | '30d' | '3m' | 'custom'
@@ -5269,12 +5437,6 @@
                 if (st._supabaseSource) range.months.forEach(function(mk) { periodPayments = periodPayments.concat(getPeriodPayments(st.id, mk)); });
                 var billing = computeBillingStats(inRange, periodPayments, rate); // Finance Core V1 — nguồn duy nhất
                 var taught = billing.expected, collected = billing.collected, remaining = billing.remaining;
-                var journalCount = 0, journalMissing = 0;
-                completed.forEach(function(l) {
-                    var j = parseLessonJournal(l.notes);
-                    var has = !!((j.content && j.content.trim()) || (j.feedback && j.feedback.trim()) || (j.homework && j.homework.trim()));
-                    if (has) journalCount++; else journalMissing++;
-                });
                 var lastCompletedDate = null;
                 lessons.forEach(function(l) { if (l.status === 'completed' && l.scheduled_date && (!lastCompletedDate || l.scheduled_date > lastCompletedDate)) lastCompletedDate = l.scheduled_date; });
                 var daysSinceLast = lastCompletedDate ? Math.round((new Date(todayIso + 'T00:00:00') - new Date(lastCompletedDate + 'T00:00:00')) / 86400000) : null;
@@ -5288,16 +5450,12 @@
                     id: st.id, name: st.name || '(Chưa có tên)', subject: st.subject || '',
                     sessions: completed.length, scheduled: scheduled.length, cancelled: cancelled.length, hours: hours,
                     taught: taught, collected: collected, remaining: remaining,
-                    journalCount: journalCount, journalMissing: journalMissing,
-                    journalRate: completed.length > 0 ? Math.round((journalCount / completed.length) * 1000) / 10 : null,
                     hasLessonInRange: inRange.length > 0, daysSinceLast: daysSinceLast, recentCancelled: recentCancelled, isActive: hasNearActivity
                 };
             });
             var lessonAnalytics = { completed: 0, scheduled: 0, cancelled: 0 };
-            var journalCompleted = 0, journalMissing = 0;
             rows.forEach(function(r) {
                 lessonAnalytics.completed += r.sessions; lessonAnalytics.scheduled += r.scheduled; lessonAnalytics.cancelled += r.cancelled;
-                journalCompleted += r.journalCount; journalMissing += r.journalMissing;
             });
             var overview = {
                 students: rows.filter(function(r) { return r.hasLessonInRange; }).length,
@@ -5306,9 +5464,7 @@
                 hours: rows.reduce(function(s, r) { return s + r.hours; }, 0),
                 taught: rows.reduce(function(s, r) { return s + r.taught; }, 0),
                 collected: rows.reduce(function(s, r) { return s + r.collected; }, 0),
-                remaining: rows.reduce(function(s, r) { return s + r.remaining; }, 0),
-                journalCompleted: journalCompleted, journalMissing: journalMissing,
-                journalRate: (journalCompleted + journalMissing) > 0 ? Math.round((journalCompleted / (journalCompleted + journalMissing)) * 1000) / 10 : null
+                remaining: rows.reduce(function(s, r) { return s + r.remaining; }, 0)
             };
             return { rows: rows, lessonAnalytics: lessonAnalytics, overview: overview };
         }
@@ -5331,7 +5487,7 @@
         }
 
         // Rule-based Risk Score (mục 13) — KHÔNG phải AI, chỉ cộng dồn các dấu hiệu quản lý thật (lâu
-        // không học / thiếu nhật ký / học phí quá hạn / nhiều buổi huỷ), KHÔNG kết luận tâm lý/học lực.
+        // không học / học phí quá hạn / nhiều buổi huỷ), KHÔNG kết luận tâm lý/học lực.
         function spComputeStudentRisk(row) {
             var reasons = [];
             var level = 'healthy';
@@ -5339,8 +5495,6 @@
             function upgrade(lv) { if (order[lv] > order[level]) level = lv; }
             if (row.daysSinceLast !== null && row.daysSinceLast >= 21) { upgrade('risk'); reasons.push(row.daysSinceLast + ' ngày chưa có buổi học'); }
             else if (row.daysSinceLast !== null && row.daysSinceLast >= 7) { upgrade('attention'); reasons.push(row.daysSinceLast + ' ngày chưa có buổi học'); }
-            if (row.journalMissing >= 3) { upgrade('risk'); reasons.push(row.journalMissing + ' buổi chưa có nhật ký'); }
-            else if (row.journalMissing >= 1) { upgrade('attention'); reasons.push(row.journalMissing + ' nhật ký chưa hoàn thành'); }
             if (row.taught > 0 && row.remaining >= row.taught) { upgrade('risk'); reasons.push('học phí quá hạn'); }
             else if (row.remaining > 0) { upgrade('attention'); reasons.push('còn ' + money(row.remaining) + ' chưa thu'); }
             if (row.recentCancelled >= 2) { upgrade('risk'); reasons.push(row.recentCancelled + ' buổi bị huỷ gần đây'); }
@@ -5363,7 +5517,7 @@
         }
 
         // Mở đúng Student Profile 2.0 đã có (KHÔNG tạo profile thứ hai), đóng Finance Dashboard trước,
-        // rồi chuyển tab tương ứng (journal/tuition/overview) — dùng cho các insight có nút hành động.
+        // rồi chuyển tab tương ứng (tuition/overview) — dùng cho các insight có nút hành động.
         async function spAnalyticsOpenStudentTab(id, tab) {
             var repView = document.getElementById('reports-page-view');
             if (repView) repView.style.display = 'none';
@@ -5413,8 +5567,7 @@
                 + '<div class="fin-stat-card"><span class="label">👨‍🎓 HỌC SINH</span><div class="value" style="color:#00cca3;">' + data.overview.students + '</div></div>'
                 + '<div class="fin-stat-card"><span class="label">📚 BUỔI HỌC</span><div class="value" style="color:#a78bfa;">' + data.overview.sessions + '</div></div>'
                 + '<div class="fin-stat-card"><span class="label">⏱ GIỜ DẠY</span><div class="value" style="color:#a78bfa;">' + data.overview.hours + 'h</div></div>'
-                + '<div class="fin-stat-card"><span class="label">💰 DOANH THU</span><div class="value" style="color:#10b981;">' + money(data.overview.taught) + '</div></div>'
-                + '<div class="fin-stat-card"><span class="label">📝 JOURNAL</span><div class="value" style="color:#00cca3;">' + (data.overview.journalRate === null ? '—' : data.overview.journalRate + '%') + '</div></div>';
+                + '<div class="fin-stat-card"><span class="label">💰 DOANH THU</span><div class="value" style="color:#10b981;">' + money(data.overview.taught) + '</div></div>';
             var labelEl = document.getElementById('rpt-tutor-period-label');
             if (labelEl) labelEl.innerText = '📅 Kỳ: ' + range.label + ' (' + spViDate(range.start) + ' – ' + spViDate(range.end) + ')';
         }
@@ -5430,29 +5583,20 @@
             var dSessions = pct(data.overview.sessions, prevData.overview.sessions);
             var dHours = pct(data.overview.hours, prevData.overview.hours);
             var dRevenue = pct(data.overview.taught, prevData.overview.taught);
-            var dJournal = (data.overview.journalRate !== null && prevData.overview.journalRate !== null)
-                ? Math.round((data.overview.journalRate - prevData.overview.journalRate) * 10) / 10 : null;
             if (prevData.overview.sessions === 0 && prevData.overview.taught === 0 && data.overview.sessions === 0) {
                 box.innerText = 'Chưa đủ dữ liệu để so sánh với kỳ trước.';
                 return;
             }
             box.innerHTML = 'So với kỳ trước liền kề (' + spViDate(spTutorPrevRange(range).start) + ' – ' + spViDate(spTutorPrevRange(range).end) + '): '
-                + 'Buổi học ' + arrow(dSessions) + ' · Giờ dạy ' + arrow(dHours) + ' · Doanh thu ' + arrow(dRevenue) + ' · '
-                + 'Journal ' + (dJournal === null ? '—' : (dJournal >= 0 ? '↑ +' : '↓ ') + dJournal + ' điểm %');
+                + 'Buổi học ' + arrow(dSessions) + ' · Giờ dạy ' + arrow(dHours) + ' · Doanh thu ' + arrow(dRevenue);
         }
 
         function renderTutorAnalyticsLesson(data) {
             document.getElementById('rpt-tutor-la-completed').innerText = data.lessonAnalytics.completed;
             document.getElementById('rpt-tutor-la-scheduled').innerText = data.lessonAnalytics.scheduled;
             document.getElementById('rpt-tutor-la-cancelled').innerText = data.lessonAnalytics.cancelled;
-            document.getElementById('rpt-tutor-la-journal').innerText = data.overview.journalCompleted;
-            document.getElementById('rpt-tutor-la-missing').innerText = data.overview.journalMissing;
             var rateEl = document.getElementById('rpt-tutor-la-rate');
-            if (rateEl) {
-                rateEl.innerText = data.overview.journalRate === null
-                    ? 'Chưa có buổi học hoàn thành trong kỳ này.'
-                    : ('Journal completion rate: ' + data.overview.journalCompleted + ' / ' + data.lessonAnalytics.completed + ' = ' + data.overview.journalRate + '%');
-            }
+            if (rateEl) rateEl.innerText = '';
             var totalInPeriod = data.lessonAnalytics.completed + data.lessonAnalytics.scheduled + data.lessonAnalytics.cancelled;
             var emptyEl = document.getElementById('rpt-tutor-la-empty');
             if (emptyEl) {
@@ -5513,10 +5657,6 @@
             if (!box) return;
             var items = [];
 
-            if (data.overview.journalMissing > 0) {
-                var worst = data.rows.filter(function(r) { return r.journalMissing > 0; }).sort(function(a, b) { return b.journalMissing - a.journalMissing; })[0];
-                items.push({ icon: '⚠️', title: data.overview.journalMissing + ' buổi học chưa có nhật ký', sub: worst ? 'Nhiều nhất: ' + escapeHtml(worst.name) : '', action: 'Xem', onclick: worst ? "spAnalyticsOpenStudentTab(" + JSON.stringify(worst.id) + ",'journal')" : '' });
-            }
             data.rows.filter(function(r) { return r.daysSinceLast !== null && r.daysSinceLast >= 7; })
                 .sort(function(a, b) { return b.daysSinceLast - a.daysSinceLast; }).slice(0, 3)
                 .forEach(function(r) { items.push({ icon: '⚠️', title: escapeHtml(r.name), sub: r.daysSinceLast + ' ngày chưa có buổi học', action: 'Xem học sinh', onclick: "spAnalyticsOpenStudentTab(" + JSON.stringify(r.id) + ",'overview')" }); });
@@ -5555,12 +5695,12 @@
             }).join('');
         }
 
-        // Bảng Học sinh (mục 10) — Học sinh / Buổi học / Journal% / Doanh thu / Trạng thái (risk badge,
+        // Bảng Học sinh (mục 10) — Học sinh / Buổi học / Doanh thu / Trạng thái (risk badge,
         // mục 13). Click -> openProfilePage() đã có, KHÔNG tạo profile thứ hai.
         function renderTutorAnalyticsStudentTable(data) {
             var tbody = document.getElementById('rpt-tutor-student-body');
             if (!tbody) return;
-            if (!data.rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-sub);">Chưa có học sinh nào.</td></tr>'; return; }
+            if (!data.rows.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-sub);">Chưa có học sinh nào.</td></tr>'; return; }
             var rows = data.rows.slice().sort(function(a, b) { return b.sessions - a.sessions; });
             var riskLabel = { healthy: '🟢 Healthy', attention: '🟡 Attention', risk: '🔴 Risk' };
             var riskColor = { healthy: '#10b981', attention: '#f59e0b', risk: '#ef4444' };
@@ -5569,7 +5709,6 @@
                 return '<tr style="cursor:pointer;" onclick="spAnalyticsOpenStudentTab(' + JSON.stringify(r.id) + ",'overview')\">"
                     + '<td><strong>' + escapeHtml(r.name) + '</strong><div style="font-size:11px;color:var(--text-sub);">' + escapeHtml(r.subject) + '</div></td>'
                     + '<td style="text-align:center;">' + r.sessions + '</td>'
-                    + '<td style="text-align:center;">' + (r.journalRate === null ? '—' : r.journalRate + '%') + '</td>'
                     + '<td style="color:#10b981;">' + money(r.taught) + '</td>'
                     + '<td><span style="color:' + riskColor[risk.level] + ';font-weight:700;font-size:12px;">' + riskLabel[risk.level] + '</span>'
                     + (risk.reasons.length ? '<div style="font-size:10.5px;color:var(--text-sub);margin-top:2px;">' + escapeHtml(risk.reasons.slice(0, 2).join(' + ')) + '</div>' : '')
@@ -5611,16 +5750,13 @@
             var hasPrevData = prev.overview.sessions > 0 || prev.overview.hours > 0 || prev.overview.taught > 0;
             var dSessions = pct(cur.overview.sessions, prev.overview.sessions);
             var dHours = pct(cur.overview.hours, prev.overview.hours);
-            var dJournal = (cur.overview.journalRate !== null && prev.overview.journalRate !== null)
-                ? Math.round((cur.overview.journalRate - prev.overview.journalRate) * 10) / 10 : null;
 
             var compareHtml = !hasPrevData
                 ? '<div style="font-size:12px;color:var(--text-sub);margin-top:12px;">Chưa đủ dữ liệu để so sánh với tuần trước.</div>'
                 : '<div style="font-size:12px;color:var(--text-sub);margin-top:12px;">So với tuần trước ('
                     + spViDate(lastWeek.start) + ' – ' + spViDate(lastWeek.end) + '): '
                     + '<span style="color:' + arrowColor(dSessions) + ';font-weight:700;">Buổi ' + arrowText(dSessions) + '</span> · '
-                    + '<span style="color:' + arrowColor(dHours) + ';font-weight:700;">Giờ dạy ' + arrowText(dHours) + '</span> · '
-                    + '<span style="color:' + arrowColor(dJournal) + ';font-weight:700;">Journal ' + arrowText(dJournal, ' điểm %') + '</span>'
+                    + '<span style="color:' + arrowColor(dHours) + ';font-weight:700;">Giờ dạy ' + arrowText(dHours) + '</span>'
                     + '</div>';
 
             box.innerHTML = '<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px;">Tuần này (' + spViDate(thisWeek.start) + ' – ' + spViDate(thisWeek.end) + ') bạn:</div>'
@@ -5629,7 +5765,6 @@
                 + '<div class="rpt-lesson-stat"><div class="num" style="color:#a78bfa;">' + cur.overview.hours + 'h</div><div class="lbl">⏱ Giờ dạy</div></div>'
                 + '<div class="rpt-lesson-stat"><div class="num" style="color:#10b981;">' + money(cur.overview.taught) + '</div><div class="lbl">💰 Doanh thu dự kiến</div></div>'
                 + '<div class="rpt-lesson-stat"><div class="num" style="color:#38bdf8;">' + money(cur.overview.collected) + '</div><div class="lbl">💵 Đã thu</div></div>'
-                + '<div class="rpt-lesson-stat"><div class="num" style="color:#00cca3;">' + (cur.overview.journalRate === null ? '—' : cur.overview.journalRate + '%') + '</div><div class="lbl">📝 Journal hoàn thành</div></div>'
                 + '</div>'
                 + compareHtml;
         }
