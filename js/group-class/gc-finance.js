@@ -80,8 +80,8 @@ var VI_MONTHS = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Th
 var gcFinRequestSeq = 0;
 
 // Hàm chính — được gọi TỪ index.html (hook duy nhất, cuối renderFinanceTable()) mỗi khi Finance
-// Dashboard render lại, truyền đúng (year, month, oneToOneCollectedVnd) của tháng đang xem.
-async function gcRefreshFinanceSection(year, month, oneToOneCollectedVnd) {
+// Dashboard render lại, truyền đúng (year, month, oneToOneRevenueVnd, oneToOneCollectedVnd) của tháng đang xem.
+async function gcRefreshFinanceSection(year, month, oneToOneRevenueVnd, oneToOneCollectedVnd) {
     var section = gcFinEl(GC_FIN_SECTION_ID);
     if (!section) return; // Finance Dashboard chưa mở / DOM chưa sẵn sàng — bỏ qua, không lỗi.
 
@@ -97,8 +97,6 @@ async function gcRefreshFinanceSection(year, month, oneToOneCollectedVnd) {
     if (elError) elError.style.display = 'none';
 
     if (!window.activeTutorId || !window.supabaseClient) {
-        // Chưa đăng nhập / chưa sẵn sàng (module nạp trước khi login xong) — hiện trạng thái trống,
-        // không phải lỗi.
         if (elCollected) elCollected.innerText = gcFinFmtVnd(0);
         if (elCount) elCount.innerText = '0';
         if (elActive) elActive.innerText = '0';
@@ -112,7 +110,7 @@ async function gcRefreshFinanceSection(year, month, oneToOneCollectedVnd) {
 
         // BƯỚC 1: group_classes của ĐÚNG tutor đang đăng nhập (defense-in-depth — không trust RLS
         // một mình, xem PHASE 5 audit ở đầu file).
-        var gcRes = await supabaseClient.from('group_classes').select('id, name, status').eq('tutor_id', activeTutorId);
+        var gcRes = await supabaseClient.from('group_classes').select('id, name, status').eq('tutor_id', activeTutorId);    
         if (gcRes.error) throw gcRes.error;
         var myGroupClasses = gcRes.data || [];
         var myGroupClassIds = myGroupClasses.map(function(c) { return c.id; });
@@ -121,29 +119,48 @@ async function gcRefreshFinanceSection(year, month, oneToOneCollectedVnd) {
 
         if (myGroupClassIds.length === 0) {
             // Tutor chưa có Group Class nào — 0 khắp nơi, KHÔNG gọi payments/enrollments thêm.
-            if (elCollected) elCollected.innerText = gcFinFmtVnd(0);
+            if (elCollected) elCollected.innerText = gcFinFmtVnd(oneToOneCollectedVnd);
             if (elCount) elCount.innerText = '0';
             if (elActive) elActive.innerText = '0 lớp · 0 học sinh';
-            if (elBreakdown) elBreakdown.innerHTML = gcFinBuildBreakdown(oneToOneCollectedVnd, 0);
+            var totalCollectedVnd = Number(oneToOneCollectedVnd) || 0;
+            if (elBreakdown) elBreakdown.innerHTML = gcFinBuildBreakdown(oneToOneRevenueVnd, 0, totalCollectedVnd);
             return;
         }
 
-        // BƯỚC 2: payments Group Class (group_class_id IS NOT NULL — mục 3 đề bài, PAYMENT IDENTITY),
-        // đã thu (status paid/partial — mục 8 đề bài), đúng tháng đang xem (payment_date — mục 9/4).
+        // BƯỚC 2: Tính Doanh thu Group Class (Revenue) qua các buổi billable
         var range = gcFinMonthRange(year, month);
+        var groupClassRevenueVnd = 0;
+
+        // Lấy TẤT CẢ enrollments (để tính historical revenue)
+        var enrRes = await supabaseClient
+            .from('group_class_enrollments')
+            .select('group_class_id, student_id, status')
+            .in('group_class_id', myGroupClassIds);
+        if (enrRes.error) throw enrRes.error;
+        var allEnrollments = enrRes.data || [];
+
+        // Tính doanh thu trên TẤT CẢ enrollments
+        for (var i = 0; i < allEnrollments.length; i++) {
+            var e = allEnrollments[i];
+            var billableRecords = await window.getBillableAttendanceForPeriod(e.group_class_id, e.student_id, range.start, range.end);
+            billableRecords.forEach(function(rec) {
+                groupClassRevenueVnd += Number(rec.class_rate) || 0;
+            });
+        }
+
+        if (mySeq !== gcFinRequestSeq) return;
+
+        // BƯỚC 3: Tính số tiền ĐÃ THU (Payments) Group Class (group_class_id IS NOT NULL — mục 3 đề bài,
+        // PAYMENT IDENTITY), đã thu (status paid/partial — mục 8 đề bài), đúng tháng đang xem (payment_date — mục 9/4).
         var payRes = await supabaseClient
             .from('payments')
-            .select('id, group_class_id, student_id, amount, status, payment_date')
+            .select('id, group_class_id, amount, status, payment_date')
             .not('group_class_id', 'is', null)
             .in('status', ['paid', 'partial'])
             .gte('payment_date', range.start)
             .lt('payment_date', range.end);
         if (payRes.error) throw payRes.error;
 
-        if (mySeq !== gcFinRequestSeq) return;
-
-        // Lọc lại ở tầng ứng dụng: chỉ giữ payment có group_class_id thuộc ĐÚNG tutor này (defense-
-        // in-depth, PHASE 5 — mục 16 "Tutor A không được thấy... payment của Group Class Tutor B").
         var myGroupClassIdSet = {};
         myGroupClassIds.forEach(function(id) { myGroupClassIdSet[id] = true; });
         var myPayments = (payRes.data || []).filter(function(p) { return myGroupClassIdSet[p.group_class_id]; });
@@ -151,33 +168,21 @@ async function gcRefreshFinanceSection(year, month, oneToOneCollectedVnd) {
         // NO DOUBLE COUNT (mục 13 đề bài): mỗi payment row cộng ĐÚNG 1 LẦN — không cộng
         // billing_snapshots.total_amount (mục 6/14 — snapshot ≠ payment), không cộng lại payment nào
         // đã bị 'cancelled'/'pending' (đã loại ở filter .in('status', ...) phía trên, đúng mục 8).
-        var collectedVnd = 0;
-        myPayments.forEach(function(p) { collectedVnd += Number(p.amount) || 0; });
+        var groupClassCollectedVnd = 0;
+        myPayments.forEach(function(p) { groupClassCollectedVnd += Number(p.amount) || 0; });
+        var totalCollectedVnd = (Number(oneToOneCollectedVnd) || 0) + groupClassCollectedVnd;
 
-        // BƯỚC 3: lớp/học sinh đang hoạt động — group_class_enrollments.status = 'active', đã có sẵn
+        // BƯỚC 4: lớp/học sinh đang hoạt động — group_class_enrollments.status = 'active', đã có sẵn
         // trên schema (mục 11 "nếu existing architecture đã có dữ liệu phù hợp"), giới hạn theo đúng
-        // group_class_id của tutor này (RLS group_class_enrollments cũng scope qua group_classes, xem
-        // audit — nhưng vẫn lọc client-side thêm cho nhất quán với payments ở trên).
+        // group_class_id của tutor này.
         var activeClassesCount = myGroupClasses.filter(function(c) { return c.status === 'active'; }).length;
-        var enrRes = await supabaseClient
-            .from('group_class_enrollments')
-            .select('group_class_id, student_id, status')
-            .eq('status', 'active')
-            .in('group_class_id', myGroupClassIds);
-        if (enrRes.error) throw enrRes.error;
+        var activeEnrollments = allEnrollments.filter(function(e) { return e.status === 'active'; });
+        var activeStudentsCount = Object.keys(activeEnrollments.reduce(function(acc, e) { acc[e.student_id] = true; return acc; }, {})).length;
 
-        if (mySeq !== gcFinRequestSeq) return;
-
-        var activeStudentIdSet = {};
-        (enrRes.data || []).forEach(function(e) {
-            if (myGroupClassIdSet[e.group_class_id]) activeStudentIdSet[e.student_id] = true;
-        });
-        var activeStudentsCount = Object.keys(activeStudentIdSet).length;
-
-        if (elCollected) elCollected.innerText = gcFinFmtVnd(collectedVnd);
+        if (elCollected) elCollected.innerText = gcFinFmtVnd(totalCollectedVnd);
         if (elCount) elCount.innerText = String(myPayments.length);
         if (elActive) elActive.innerText = activeClassesCount + ' lớp · ' + activeStudentsCount + ' học sinh';
-        if (elBreakdown) elBreakdown.innerHTML = gcFinBuildBreakdown(oneToOneCollectedVnd, collectedVnd);
+        if (elBreakdown) elBreakdown.innerHTML = gcFinBuildBreakdown(oneToOneRevenueVnd, groupClassRevenueVnd, totalCollectedVnd);
     } catch (err) {
         if (mySeq !== gcFinRequestSeq) return;
         console.error('[GROUP CLASS FINANCE] Lỗi tải dữ liệu:', err);
@@ -192,15 +197,17 @@ async function gcRefreshFinanceSection(year, month, oneToOneCollectedVnd) {
     }
 }
 
-// Khối "Tổng doanh thu" — mục 5 đề bài (ví dụ y hệt format trong đề bài: 1-to-1 / Group Class /
-// Tổng cộng). Đây CHỈ là cộng hiển thị (aggregation layer) — không tạo lại phép tính 1-to-1, số
-// oneToOneVnd được TRUYỀN VÀO từ renderFinanceTable() (đã tính sẵn ở đó, xem hook ở index.html).
-function gcFinBuildBreakdown(oneToOneVnd, groupClassVnd) {
-    var total = (Number(oneToOneVnd) || 0) + (Number(groupClassVnd) || 0);
-    return '<div style="display:flex;justify-content:space-between;"><span>Doanh thu 1-to-1</span><strong>' + gcFinFmtVnd(oneToOneVnd) + '</strong></div>'
-        + '<div style="display:flex;justify-content:space-between;"><span>Doanh thu Group Class</span><strong>' + gcFinFmtVnd(groupClassVnd) + '</strong></div>'
+// Khối "Tổng doanh thu" và "Đã thu" / "Còn phải thu"
+function gcFinBuildBreakdown(oneToOneRevenueVnd, groupClassRevenueVnd, collectedVnd) {
+    var totalRevenue = (Number(oneToOneRevenueVnd) || 0) + (Number(groupClassRevenueVnd) || 0);
+    var remainingVnd = Math.max(0, totalRevenue - (Number(collectedVnd) || 0));
+    
+    return '<div style="display:flex;justify-content:space-between;"><span>Doanh thu 1-to-1</span><strong>' + gcFinFmtVnd(oneToOneRevenueVnd) + '</strong></div>'
+        + '<div style="display:flex;justify-content:space-between;"><span>Doanh thu Group Class</span><strong>' + gcFinFmtVnd(groupClassRevenueVnd) + '</strong></div>'
         + '<div style="border-top:1px solid rgba(245,158,11,0.35);margin:4px 0;"></div>'
-        + '<div style="display:flex;justify-content:space-between;"><span>Tổng doanh thu</span><strong style="color:#f59e0b;">' + gcFinFmtVnd(total) + '</strong></div>';
+        + '<div style="display:flex;justify-content:space-between;"><span>Tổng doanh thu</span><strong style="color:#f59e0b;">' + gcFinFmtVnd(totalRevenue) + '</strong></div>'
+        + '<div style="display:flex;justify-content:space-between;margin-top:8px;"><span>Tổng đã thu</span><strong style="color:#10b981;">' + gcFinFmtVnd(collectedVnd) + '</strong></div>'
+        + '<div style="display:flex;justify-content:space-between;"><span>Tổng còn phải thu</span><strong style="color:#ef4444;">' + gcFinFmtVnd(remainingVnd) + '</strong></div>';
 }
 
 // Expose qua window — module ES (type="module") nên KHÔNG có global tự động; index.html (classic

@@ -2592,7 +2592,7 @@
             // grandCollectedVnd vừa tính ở trên cho khối "Tổng cộng"). KHÔNG await (fire-and-forget) —
             // gc-finance.js tự quản lý loading state/lỗi trong #gc-finance-section, không chặn phần
             // Finance 1-to-1 đã render xong ở trên.
-            if (window.gcRefreshFinanceSection) { window.gcRefreshFinanceSection(y, m, grandCollectedVnd); }
+            if (window.gcRefreshFinanceSection) { window.gcRefreshFinanceSection(y, m, grandTaughtVnd, grandCollectedVnd); }
         }
 
         // Rate limiting: max 5 lần sai → khóa 15 phút
