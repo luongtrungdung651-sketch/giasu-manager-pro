@@ -2534,13 +2534,16 @@
         function renderFinanceTable() {
             var y = finCalYear, m = finCalMonth;
             var monthKey = getMonthKey(y, m);
+            var financeStudents = classList.filter(function(st) {
+                return getBillingLessonsInMonth(st, monthKey).length > 0;
+            });
             var tbody = document.getElementById('fin-table-body');
             tbody.innerHTML = '';
             // Tính bằng đơn vị đồng thật (VND) để cộng đúng với payments.amount (KHÔNG lẫn đơn vị
             // "nghìn đồng" của money/rate) — tránh lỗi cộng sai đơn vị giữa "tiền dạy" và "tiền đã thu".
             var grandTaughtVnd = 0, grandCollectedVnd = 0;
 
-            classList.forEach(function(st) {
+            financeStudents.forEach(function(st) {
                 var sessions = getSessionsInMonth(st, monthKey);
                 var money = getMoneyInMonth(st, monthKey); // đơn vị nghìn đồng, giống các nơi khác trong Finance Dashboard
                 var taughtVnd = money * 1000;
@@ -2565,8 +2568,8 @@
                 tbody.appendChild(tr);
             });
 
-            if (classList.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-sub); padding:30px;">Chưa có học sinh nào.</td></tr>';
+            if (financeStudents.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-sub); padding:30px;">Chưa có học sinh 1-to-1 trong tháng này.</td></tr>';
             }
 
             // "Đã thu" = tổng THẬT của public.payments (paid+partial), không phải suy ra từ badge
@@ -2574,7 +2577,7 @@
             // "Còn phải thu" = max(0, phải thu - đã thu), không cho về âm.
             var grandRemainingVnd = Math.max(0, grandTaughtVnd - grandCollectedVnd);
             var summary = document.getElementById('fin-table-summary');
-            summary.innerHTML = '<div style="font-size:14px; color:var(--text-sub);">Tổng <strong style="color:var(--text-main);">' + classList.length + '</strong> học sinh</div>'
+            summary.innerHTML = '<div style="font-size:14px; color:var(--text-sub);">Tổng <strong style="color:var(--text-main);">' + financeStudents.length + '</strong> học sinh</div>'
                 + '<div style="display:flex; gap:24px; flex-wrap:wrap;">'
                 + '<span>Phải thu: <strong style="color:#00cca3;">' + grandTaughtVnd.toLocaleString('vi-VN') + ' đ</strong></span>'
                 + '<span>Đã thu: <strong style="color:#10b981;">' + grandCollectedVnd.toLocaleString('vi-VN') + ' đ</strong></span>'
