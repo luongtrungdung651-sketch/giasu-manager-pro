@@ -444,6 +444,28 @@
                     <label>Học phí / Buổi (nghìn đồng)</label>
                     <input type="number" id="student-rate" value="150" step="10">
 
+                    <!-- STEP 6A: markup-only cho tính năng giá Online/Offline — CHƯA có JS xử lý
+                         checkbox/show-hide/validation (xem STEP 6B). rate ở trên GIỮ NGUYÊN, không đổi. -->
+                    <label>Hình thức dạy:</label>
+                    <div style="display:flex; align-items:center; gap:14px; margin-bottom:14px;">
+                        <label style="display:flex;align-items:center;gap:5px;font-weight:normal;margin:0;cursor:pointer;">
+                            <input type="checkbox" id="student-online-mode" style="width:16px;height:16px;margin:0;accent-color:#00cca3;"> Online
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-weight:normal;margin:0;cursor:pointer;">
+                            <input type="checkbox" id="student-offline-mode" style="width:16px;height:16px;margin:0;accent-color:#00cca3;"> Offline
+                        </label>
+                    </div>
+
+                    <div style="display:none;">
+                        <label>Học phí Online / buổi (nghìn đồng)</label>
+                        <input type="number" id="student-online-rate" step="10">
+                    </div>
+
+                    <div style="display:none;">
+                        <label>Học phí Offline / buổi (nghìn đồng)</label>
+                        <input type="number" id="student-offline-rate" step="10">
+                    </div>
+
                     <label>Thứ học cố định (chọn một hoặc nhiều ngày)</label>
                     <div id="day-checkbox-group" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
                         <label style="display:flex;align-items:center;gap:5px;font-weight:normal;margin:0;cursor:pointer;background:var(--bg-card-sub);border:1px solid var(--border-color);padding:7px 12px;border-radius:8px;" id="daychk-label-T2">
@@ -2422,6 +2444,30 @@
                         <span style="font-size:13px;color:var(--text-sub);">nghìn đ/buổi</span>
                     </div>
                     <div id="ec-rate-preview" style="margin-top:6px;font-size:12px;color:var(--accent);"></div>
+                </div>
+
+                <!-- STEP 6A: markup-only cho tính năng giá Online/Offline — CHƯA có JS xử lý
+                     checkbox/show-hide/validation (xem STEP 6B). #ec-rate ở trên GIỮ NGUYÊN, không đổi. -->
+                <div>
+                    <div class="em-section-title">Hình thức dạy</div>
+                    <div style="display:flex;align-items:center;gap:14px;">
+                        <label style="display:flex;align-items:center;gap:5px;font-weight:normal;margin:0;cursor:pointer;">
+                            <input type="checkbox" id="ec-online-mode" style="width:16px;height:16px;margin:0;accent-color:#00cca3;"> Online
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;font-weight:normal;margin:0;cursor:pointer;">
+                            <input type="checkbox" id="ec-offline-mode" style="width:16px;height:16px;margin:0;accent-color:#00cca3;"> Offline
+                        </label>
+                    </div>
+                </div>
+
+                <div style="display:none;">
+                    <div class="em-section-title">Học phí Online / buổi (nghìn đồng)</div>
+                    <input type="number" id="ec-online-rate" step="10" style="margin:0;">
+                </div>
+
+                <div style="display:none;">
+                    <div class="em-section-title">Học phí Offline / buổi (nghìn đồng)</div>
+                    <input type="number" id="ec-offline-rate" step="10" style="margin:0;">
                 </div>
 
                 <!-- Ngày học -->

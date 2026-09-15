@@ -49,6 +49,38 @@ var removeClassInFlight = false;
 var saveEditClassInFlight = false;
 
 // ----------------------------------------------------------------------
+// STEP 6B — ONLINE/OFFLINE PRICING UI (show/hide) — Create + Edit
+// ----------------------------------------------------------------------
+// Markup (checkbox + input rate tương ứng) đã có sẵn từ STEP 6A trong index.html — module này
+// CHỈ thêm behavior show/hide, KHÔNG đổi markup/CSS/modal structure. Wrapper <div> chứa mỗi
+// input rate (#student-online-rate/#student-offline-rate/#ec-online-rate/#ec-offline-rate) đã
+// có sẵn style="display:none;" inline — dùng chính wrapper đó (input.parentElement) để
+// show/hide, KHÔNG tạo class CSS mới.
+var PRICING_MODE_PAIRS = [
+    { mode: 'student-online-mode', rate: 'student-online-rate' },
+    { mode: 'student-offline-mode', rate: 'student-offline-rate' },
+    { mode: 'ec-online-mode', rate: 'ec-online-rate' },
+    { mode: 'ec-offline-mode', rate: 'ec-offline-rate' }
+];
+
+function updatePricingModeVisibility(pair) {
+    var chk = document.getElementById(pair.mode);
+    var rateInput = document.getElementById(pair.rate);
+    if (!chk || !rateInput || !rateInput.parentElement) return;
+    rateInput.parentElement.style.display = chk.checked ? '' : 'none';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    PRICING_MODE_PAIRS.forEach(function(pair) {
+        var chk = document.getElementById(pair.mode);
+        if (!chk) return;
+        chk.addEventListener('change', function() { updatePricingModeVisibility(pair); });
+        // Đồng bộ hiển thị ban đầu theo trạng thái checked hiện tại của checkbox lúc load trang.
+        updatePricingModeVisibility(pair);
+    });
+});
+
+// ----------------------------------------------------------------------
 // TẠO STUDENT RECORD (STEP 11F-B — tách reusable primitive, CHUẨN BỊ cho STEP 11F-C)
 // ----------------------------------------------------------------------
 // Tách NGUYÊN VẸN phần INSERT public.students ra khỏi addNewClassActual() bên dưới — CHỈ tạo
@@ -69,10 +101,17 @@ var saveEditClassInFlight = false;
 // truyền tham số này — addNewClassActual() (1-to-1, gọi hàm này với đúng 3 tham số cũ) vì vậy
 // hoàn toàn KHÔNG bị ảnh hưởng: payload INSERT của nó giữ nguyên y hệt trước đây (không có
 // parent_name/parent_phone trong object gửi lên Supabase).
-async function createStudentRecord(name, subject, rate, parentName, parentPhone) {
+// STEP 6B: onlineRate/offlineRate là 2 tham số MỚI, TÙY CHỌN, thêm vào CUỐI danh sách tham số
+// (sau parentName/parentPhone) — cùng convention `!== undefined` như parentName/parentPhone ở
+// trên, để các caller hiện tại (enrollment.js gọi 5 tham số, addNewClassActual() gọi 3 tham số)
+// hoàn toàn KHÔNG bị ảnh hưởng: payload INSERT của họ giữ nguyên y hệt trước đây (không có
+// online_rate/offline_rate trong object gửi lên Supabase khi không truyền 2 tham số này).
+async function createStudentRecord(name, subject, rate, parentName, parentPhone, onlineRate, offlineRate) {
     var payload = { tutor_id: activeTutorId, name: name, subject: subject, rate: rate };
     if (parentName !== undefined) payload.parent_name = parentName || null;
     if (parentPhone !== undefined) payload.parent_phone = parentPhone || null;
+    if (onlineRate !== undefined) payload.online_rate = onlineRate;
+    if (offlineRate !== undefined) payload.offline_rate = offlineRate;
     return await supabaseClient
         .from('students')
         .insert(payload)
@@ -101,6 +140,23 @@ async function addNewClass() {
 
     if (!name || !subject || isNaN(rate) || days.length === 0 || !startTime) { alert('Vui lòng nhập đầy đủ thông tin và chọn ít nhất một ngày học!'); return; }
 
+    // STEP 6B: Online/Offline pricing (1-to-1) — KHÔNG đụng students.rate ở trên, chỉ đọc thêm
+    // 4 field mới (#student-online-mode/#student-online-rate/#student-offline-mode/
+    // #student-offline-rate) đã có markup sẵn từ STEP 6A. Đơn vị giống students.rate ("nghìn
+    // đồng/buổi") — KHÔNG nhân 1000, KHÔNG quy đổi VNĐ ở đây.
+    var onlineChecked = document.getElementById('student-online-mode').checked;
+    var offlineChecked = document.getElementById('student-offline-mode').checked;
+    var onlineRateInput = parseInt(document.getElementById('student-online-rate').value);
+    var offlineRateInput = parseInt(document.getElementById('student-offline-rate').value);
+
+    if (!onlineChecked && !offlineChecked) { alert('Vui lòng chọn ít nhất một hình thức dạy: Online hoặc Offline!'); return; }
+    if (onlineChecked && (isNaN(onlineRateInput) || onlineRateInput <= 0)) { alert('Vui lòng nhập học phí Online hợp lệ (lớn hơn 0)!'); return; }
+    if (offlineChecked && (isNaN(offlineRateInput) || offlineRateInput <= 0)) { alert('Vui lòng nhập học phí Offline hợp lệ (lớn hơn 0)!'); return; }
+
+    // Mode không được chọn -> null (KHÔNG suy luận/copy từ rate hay mode còn lại).
+    var onlineRate = onlineChecked ? onlineRateInput : null;
+    var offlineRate = offlineChecked ? offlineRateInput : null;
+
     if (activeTutorId) {
         var allConflicts = [];
         days.forEach(function(dayName) {
@@ -110,15 +166,15 @@ async function addNewClass() {
         if (allConflicts.length > 0) {
             var endTime = acFloatToTimeStr(timeToFloat(startTime) + parseFloat(duration));
             acShowConflictWarning(allConflicts, { dayName: days.join(', '), startTime: startTime, endTime: endTime }, function() {
-                addNewClassActual(name, subject, rate, days, duration, startTime);
+                addNewClassActual(name, subject, rate, days, duration, startTime, onlineRate, offlineRate);
             });
             return; // mục 6: KHÔNG âm thầm save — chờ Tutor quyết định trên modal
         }
     }
-    await addNewClassActual(name, subject, rate, days, duration, startTime);
+    await addNewClassActual(name, subject, rate, days, duration, startTime, onlineRate, offlineRate);
 }
 
-async function addNewClassActual(name, subject, rate, days, duration, startTime) {
+async function addNewClassActual(name, subject, rate, days, duration, startTime, onlineRate, offlineRate) {
     // STEP 9A guard: chặn gọi trùng khi request trước CHƯA xong (double-click nút, hoặc
     // double-click nút "Xác nhận" trên modal cảnh báo trùng lịch — cả 2 đường gọi đều đi qua
     // đúng hàm này nên chặn ở đây là đủ, không cần sửa addNewClass()/acShowConflictWarning()).
@@ -132,11 +188,15 @@ async function addNewClassActual(name, subject, rate, days, duration, startTime)
         var newId = Date.now();
         // Giá trị mặc định dùng khi KHÔNG có activeTutorId (tài khoản local cũ, không có Supabase)
         var finalName = name, finalSubject = subject, finalRate = rate;
+        // STEP 6B: giá trị mặc định (dùng khi KHÔNG có activeTutorId) — giữ nguyên đơn vị
+        // "nghìn đồng/buổi" như rate, KHÔNG nhân 1000 ở đây.
+        var finalOnlineRate = onlineRate !== undefined ? onlineRate : null;
+        var finalOfflineRate = offlineRate !== undefined ? offlineRate : null;
 
         if (activeTutorId) {
             console.log('[ADD STUDENT] input rate:', rate);
 
-            var insertResult = await createStudentRecord(name, subject, rate);
+            var insertResult = await createStudentRecord(name, subject, rate, undefined, undefined, onlineRate, offlineRate);
 
             console.log('[ADD STUDENT] Supabase inserted student:', insertResult.data);
 
@@ -153,6 +213,8 @@ async function addNewClassActual(name, subject, rate, days, duration, startTime)
             finalName = insertResult.data.name != null ? insertResult.data.name : name;
             finalSubject = insertResult.data.subject != null ? insertResult.data.subject : subject;
             finalRate = insertResult.data.rate != null ? insertResult.data.rate : rate;
+            finalOnlineRate = insertResult.data.online_rate !== undefined ? insertResult.data.online_rate : finalOnlineRate;
+            finalOfflineRate = insertResult.data.offline_rate !== undefined ? insertResult.data.offline_rate : finalOfflineRate;
 
             var scheduleRows = days.map(function(d) {
                 var row = { student_id: newId };
@@ -170,6 +232,7 @@ async function addNewClassActual(name, subject, rate, days, duration, startTime)
 
         classList.push({
             id: newId, name: finalName, subject: finalSubject, rate: finalRate,
+            online_rate: finalOnlineRate, offline_rate: finalOfflineRate, // STEP 6B
             day: days[0],   // giữ lại trường cũ để tương thích
             days: days,     // mảng ngày mới
             startTime: startTime, startTimes: days.map(function() { return startTime; }),
@@ -180,6 +243,13 @@ async function addNewClassActual(name, subject, rate, days, duration, startTime)
 
         document.getElementById('student-name').value = '';
         document.getElementById('student-subject').value = '';
+        // STEP 6B: reset Online/Offline pricing fields sau khi thêm học sinh thành công
+        document.getElementById('student-online-mode').checked = false;
+        document.getElementById('student-offline-mode').checked = false;
+        document.getElementById('student-online-rate').value = '';
+        document.getElementById('student-offline-rate').value = '';
+        updatePricingModeVisibility(PRICING_MODE_PAIRS[0]);
+        updatePricingModeVisibility(PRICING_MODE_PAIRS[1]);
         // Reset checkboxes
         document.querySelectorAll('#day-checkbox-group input[type=checkbox]').forEach(function(c) {
             c.checked = false;
@@ -245,12 +315,12 @@ async function removeClass(id, btnEl) {
 // ----------------------------------------------------------------------
 // DANH SÁCH / SEARCH / FILTER
 // ----------------------------------------------------------------------
-// Hiển thị lịch học: CHỈ thay đổi cách build chuỗi hiển thị (không đụng vào c.days/c.startTimes/
+// Hiển thị lịch học: CHỈ thay đổi cách build chuỗi hiển thị (không đăng vào c.days/c.startTimes/
 // c.startTime/c.day — dữ liệu state giữ nguyên 100%). Quy tắc hiển thị:
 //   - Các thứ có CÙNG GIỜ được gom vào 1 nhóm.
 //   - Trong 1 nhóm, nếu các thứ liên tiếp (theo thứ tự Thứ 2 → Chủ Nhật) thì rút gọn thành
 //     "Thứ X–Thứ Y"; nếu không liên tiếp thì liệt kê bằng dấu phẩy "Thứ A, Thứ B".
-//   - Nhiều nhóm giờ khác nhau được nối bằng " · ", sắp theo thứ xuất hiện sớm nhất trong tuần.
+//   - Nhiều nhóm giờ khác nhau được nối bằng " · ", sắp theo thứ tự xuất hiện sớm nhất trong tuần.
 //   - Giờ luôn bỏ phần giây (HH:MM:SS -> HH:MM).
 //   - Vẫn nhận diện được cả 2 format dữ liệu cũ/mới (c.days+c.startTimes song song, hoặc
 //     c.days+c.startTime chung, hoặc c.day+c.startTime đơn lẻ) để backward-compatible.
@@ -367,22 +437,37 @@ function renderClassList() {
     // search/filter đang áp dụng) — filter chỉ quyết định card nào được RENDER bên dưới.
     var enriched = classList.map(function(c) {
         var doneSessionsThisMonth = 0;
+        var totalCost; // STEP 9I: để undefined cho tới khi xác định được — Supabase set trực tiếp bên dưới, local-only set ở fallback cuối cùng (giữ nguyên logic cũ)
         if (c._supabaseSource) {
             // SOURCE OF TRUTH cho học sinh Supabase: public.lessons (qua lessonsCacheByStudent),
             // dùng LẠI đúng hàm getSessionsInMonth() mà Finance Dashboard đang dùng — để Student
             // Card và Finance Dashboard KHÔNG BAO GIỜ lệch số liệu với cùng một dữ liệu gốc.
             // KHÔNG dùng c.attendance/c.sessions làm nguồn chính nữa (chỉ còn là bridge hiển thị cũ).
             doneSessionsThisMonth = getSessionsInMonth(c, currentMonthKey).length;
+
+            // STEP 9I (fix Blocker #1 — STEP 9H): totalCost của học sinh Supabase PHẢI là tổng
+            // lesson.rate THẬT (historical snapshot của từng buổi, đã tự chọn đúng online_rate/
+            // offline_rate lúc tạo lesson) — KHÔNG được tính bằng doneSessionsThisMonth ×
+            // student.rate hiện tại. Lấy TRỰC TIẾP từ lessonsCacheByStudent với ĐÚNG filter mà
+            // getSessionsInMonth() dùng ở trên (completed + đúng tháng) để không lệch số liệu,
+            // rồi cộng dồn lesson.rate (đã là VNĐ đầy đủ — KHÔNG nhân ×1000, KHÔNG tạo lesson giả).
+            var monthLessonsForCost = (lessonsCacheByStudent[c.id] || []).filter(function(l) {
+                return l.status === 'completed' && l.scheduled_date && l.scheduled_date.slice(0, 7) === currentMonthKey;
+            });
+            totalCost = monthLessonsForCost.reduce(function(sum, l) { return sum + (Number(l.rate) || 0); }, 0);
         } else if (c.attendance && c.attendance[currentMonthKey]) {
             doneSessionsThisMonth = c.attendance[currentMonthKey].length;
         } else {
             doneSessionsThisMonth = c.sessions || 0;
         }
 
-        var totalCost = computeBillingStats(
-            Array.from({ length: doneSessionsThisMonth }, function() { return { status: 'completed', duration: 0 }; }),
-            [], (Number(c.rate) || 0) * 1000
-        ).expected;
+        if (totalCost === undefined) {
+            // Local-only: GIỮ NGUYÊN behavior cũ y hệt trước STEP 9I — KHÔNG đụng (đúng mục 2 đề bài).
+            totalCost = computeBillingStats(
+                Array.from({ length: doneSessionsThisMonth }, function() { return { status: 'completed', duration: 0 }; }),
+                [], (Number(c.rate) || 0) * 1000
+            ).expected;
+        }
         globalRevenue += totalCost;
 
         var feeStatus = getClassCardFeeStatus(c, currentMonthKey, totalCost);
@@ -510,6 +595,16 @@ function openEditClass(id) {
     document.getElementById('ec-duration').value = c.duration || '2';
     ecUpdateRatePreview();
 
+    // STEP 6B — Online/Offline pricing: điền theo đúng dữ liệu hiện có của student (online_rate/
+    // offline_rate). Legacy student (cả hai đều null): KHÔNG suy luận từ rate — để trống/bỏ tick,
+    // đúng mục 3.D/4 đề bài (tránh mất dữ liệu do tự ý copy rate sang online/offline).
+    document.getElementById('ec-online-mode').checked = c.online_rate != null;
+    document.getElementById('ec-online-rate').value = c.online_rate != null ? c.online_rate : '';
+    document.getElementById('ec-offline-mode').checked = c.offline_rate != null;
+    document.getElementById('ec-offline-rate').value = c.offline_rate != null ? c.offline_rate : '';
+    updatePricingModeVisibility(PRICING_MODE_PAIRS[2]); // ec-online-mode / ec-online-rate
+    updatePricingModeVisibility(PRICING_MODE_PAIRS[3]); // ec-offline-mode / ec-offline-rate
+
     // Ngày học
     var cdays = c.days || [c.day];
     document.querySelectorAll('#ec-days input').forEach(function(chk) {
@@ -625,6 +720,23 @@ async function saveEditClass() {
     if (days.length === 0) { alert('Chọn ít nhất 1 ngày học.'); return; }
     if (ecSelectedTimes.length === 0) { alert('Chọn ít nhất 1 giờ dạy.'); return; }
 
+    // STEP 6B: Online/Offline pricing (1-to-1) — đọc + validate 4 field #ec-online-mode/
+    // #ec-online-rate/#ec-offline-mode/#ec-offline-rate. Cùng đơn vị "nghìn đồng/buổi" như
+    // ec-rate — KHÔNG nhân 1000, KHÔNG quy đổi VNĐ ở đây.
+    var ecOnlineChecked = document.getElementById('ec-online-mode').checked;
+    var ecOfflineChecked = document.getElementById('ec-offline-mode').checked;
+    var ecOnlineRateInput = parseInt(document.getElementById('ec-online-rate').value);
+    var ecOfflineRateInput = parseInt(document.getElementById('ec-offline-rate').value);
+
+    if (!ecOnlineChecked && !ecOfflineChecked) { alert('Vui lòng chọn ít nhất một hình thức dạy: Online hoặc Offline!'); return; }
+    if (ecOnlineChecked && (isNaN(ecOnlineRateInput) || ecOnlineRateInput <= 0)) { alert('Vui lòng nhập học phí Online hợp lệ (lớn hơn 0)!'); return; }
+    if (ecOfflineChecked && (isNaN(ecOfflineRateInput) || ecOfflineRateInput <= 0)) { alert('Vui lòng nhập học phí Offline hợp lệ (lớn hơn 0)!'); return; }
+
+    // Mode không được chọn -> null (KHÔNG suy luận/copy từ rate hay mode còn lại, KHÔNG tự ý
+    // giữ giá trị cũ của mode vừa bị bỏ tick — đúng mục 3.C đề bài).
+    var ecOnlineRate = ecOnlineChecked ? ecOnlineRateInput : null;
+    var ecOfflineRate = ecOfflineChecked ? ecOfflineRateInput : null;
+
     if (activeTutorId) {
         var allConflicts = [];
         days.forEach(function(d, i) {
@@ -636,15 +748,15 @@ async function saveEditClass() {
             var repTime = ecSelectedTimes[0];
             var endTime = acFloatToTimeStr(timeToFloat(repTime) + parseFloat(duration));
             acShowConflictWarning(allConflicts, { dayName: days.join(', '), startTime: repTime, endTime: endTime }, function() {
-                saveEditClassActual(c, name, subject, rate, duration, days);
+                saveEditClassActual(c, name, subject, rate, duration, days, ecOnlineRate, ecOfflineRate);
             });
             return; // mục 6: KHÔNG âm thầm save
         }
     }
-    await saveEditClassActual(c, name, subject, rate, duration, days);
+    await saveEditClassActual(c, name, subject, rate, duration, days, ecOnlineRate, ecOfflineRate);
 }
 
-async function saveEditClassActual(c, name, subject, rate, duration, days) {
+async function saveEditClassActual(c, name, subject, rate, duration, days, onlineRate, offlineRate) {
     // STEP 9A guard: chặn gọi trùng khi request trước CHƯA xong — cả 2 đường gọi
     // (saveEditClass() trực tiếp, hoặc qua modal xác nhận trùng lịch) đều đi qua đúng
     // hàm này nên chặn ở đây là đủ.
@@ -655,15 +767,25 @@ async function saveEditClassActual(c, name, subject, rate, duration, days) {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.innerText = 'Đang lưu...'; }
 
     try {
+        // STEP 6B: mặc định (dùng khi KHÔNG có activeTutorId) — null khi không truyền, giữ
+        // nguyên đơn vị "nghìn đồng/buổi" như rate, KHÔNG nhân 1000 ở đây.
+        var finalOnlineRate = onlineRate !== undefined ? onlineRate : null;
+        var finalOfflineRate = offlineRate !== undefined ? offlineRate : null;
+
         if (activeTutorId) {
             console.log('[EDIT STUDENT] rate input:', rate);
 
             // UPDATE trực tiếp public.students, đúng row theo id, bao gồm cả cột rate.
+            // STEP 6B: online_rate/offline_rate LUÔN được gửi trong payload này (kể cả null cho
+            // mode không được chọn) — đúng mục 3.C/3.D đề bài ("mode không được chọn phải lưu
+            // null"). Vì openEditClass() đã điền checkbox/rate đúng theo dữ liệu hiện có của
+            // student trước đó, nếu tutor không đụng gì tới 2 field này thì giá trị gửi lên vẫn
+            // y hệt giá trị cũ — KHÔNG có chuyện mất dữ liệu chỉ vì field "không được chọn".
             // .select().single() để đọc lại NGAY giá trị thực tế mà Supabase vừa ghi
             // (SOURCE OF TRUTH) — không suy ra/tin vào biến local "rate" ở trên.
             var updResult = await supabaseClient
                 .from('students')
-                .update({ name: name, subject: subject, rate: rate })
+                .update({ name: name, subject: subject, rate: rate, online_rate: finalOnlineRate, offline_rate: finalOfflineRate })
                 .eq('id', editingClassId)
                 .select()
                 .single();
@@ -680,6 +802,8 @@ async function saveEditClassActual(c, name, subject, rate, duration, days) {
             }
             // Ghi đè lại rate bằng giá trị THẬT vừa đọc từ Supabase (không phải giá trị nhập vào input)
             rate = updResult.data.rate != null ? updResult.data.rate : rate;
+            finalOnlineRate = updResult.data.online_rate !== undefined ? updResult.data.online_rate : finalOnlineRate;
+            finalOfflineRate = updResult.data.offline_rate !== undefined ? updResult.data.offline_rate : finalOfflineRate;
 
             var delSched = await supabaseClient.from('student_schedules').delete().eq('student_id', editingClassId);
             if (delSched.error) {
@@ -707,6 +831,8 @@ async function saveEditClassActual(c, name, subject, rate, duration, days) {
         c.name = name;
         c.subject = subject;
         c.rate = rate;
+        c.online_rate = finalOnlineRate;   // STEP 6B
+        c.offline_rate = finalOfflineRate; // STEP 6B
         c.duration = duration;
         c.days = days;
         c.day = days[0];

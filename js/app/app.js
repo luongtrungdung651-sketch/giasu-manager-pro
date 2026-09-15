@@ -952,7 +952,17 @@
             todayItems.forEach(function(i) {
                 if (i.status === 'cancelled') return; // buổi đã huỷ không tính vào giờ/doanh thu dự kiến
                 totalHoursToday += Number(i.duration) || 0;
-                totalRevenueToday += (Number(i.student.rate) || 0) * 1000;
+                // STEP 9C: nếu buổi học NÀY đã có lesson thật (i.lesson != null, tức đã tạo trong
+                // public.lessons — xem getLessonItemsForDate()) thì PHẢI dùng đúng lesson.rate (snapshot
+                // VNĐ đầy đủ tại thời điểm tạo, đã tự chọn đúng online_rate/offline_rate — xem
+                // createLesson() trong js/lessons/lessons.js), KHÔNG dùng lại student.rate hiện tại.
+                // Nếu buổi học CHƯA có lesson (item.lesson === null — chỉ là dự kiến từ lịch cố định,
+                // chưa từng được tạo/click), thì chưa hề có snapshot nào để đọc — giữ nguyên cách ước
+                // tính cũ bằng student.rate hiện tại (đây là "doanh thu DỰ KIẾN", không phải historical
+                // billing của 1 lesson đã tồn tại).
+                totalRevenueToday += i.lesson
+                    ? (Number(i.lesson.rate) || 0)
+                    : (Number(i.student.rate) || 0) * 1000;
             });
             var kpiTotalEl = document.getElementById('tw-kpi-total');
             var kpiDoneEl = document.getElementById('tw-kpi-done');
@@ -1704,7 +1714,12 @@
 
             var endTime = item.startTime ? computeScheduleEndTime(item.startTime, item.duration) : null;
             var timeText = item.startTime ? (item.startTime + (endTime ? ' – ' + endTime : '')) : '—';
-            var rateVnd = (Number(c.rate) || 0) * 1000;
+            // STEP 9C: card đại diện cho lesson ĐÃ TỒN TẠI (item.lesson != null) -> phải đọc đúng
+            // lesson.rate (snapshot VNĐ đầy đủ, đã tự chọn đúng online_rate/offline_rate lúc tạo — xem
+            // createLesson()), KHÔNG dùng lại c.rate hiện tại. Card CHƯA có lesson (item.lesson === null,
+            // chỉ là dự kiến từ lịch cố định, chưa từng tạo) -> chưa có snapshot nào để đọc, giữ nguyên
+            // ước tính bằng c.rate hiện tại như trước (current-price UI cho buổi chưa xảy ra).
+            var rateVnd = item.lesson ? (Number(item.lesson.rate) || 0) : (Number(c.rate) || 0) * 1000;
             var meta = lessonStatusMeta[item.status] || lessonStatusMeta.scheduled;
             var icon = TODAYS_WORK_ICON[item.status] || TODAYS_WORK_ICON.scheduled;
             var pillColor = item.status === 'completed' ? '#10b981' : item.status === 'cancelled' ? '#ef4444' : item.status === 'absent' ? '#f59e0b' : 'var(--text-sub)';
@@ -1734,13 +1749,22 @@
             var completeBtn = card.querySelector('.tw-complete-btn');
             if (completeBtn) {
                 completeBtn.addEventListener('click', async function() {
+                    // STEP 7 — entry point B: nếu buổi học NÀY CHƯA tồn tại (item.lesson == null) thì
+                    // bấm "Hoàn thành" sẽ TẠO lesson mới (qua setLessonStatusForDate() ->
+                    // createLesson()) -> phải xác định teaching_mode TRƯỚC. Lesson ĐÃ tồn tại thì giữ
+                    // nguyên hành vi cũ, KHÔNG hỏi mode / không đổi rate của lesson cũ.
+                    var teachingMode;
+                    if (!item.lesson) {
+                        teachingMode = resolveStudentTeachingMode(c);
+                        if (teachingMode === null) return; // Case C, tutor cancel -> KHÔNG tạo lesson
+                    }
                     completeBtn.disabled = true;
                     completeBtn.innerText = 'Đang lưu...';
                     // setLessonStatusForDate là DUY NHẤT flow được phép đổi status (mục 15/16): thành
                     // công -> reload từ Supabase rồi tự renderTodaysWork(); thất bại -> alert lỗi và
                     // KHÔNG đổi UI. Gọi lại renderTodaysWork() ở đây để chắc chắn nút được vẽ lại đúng
                     // trạng thái thật (kể cả khi thất bại, tránh nút bị kẹt ở "Đang lưu...").
-                    await setLessonStatusForDate(c, item.isoDate, item.dayName, 'completed', item.lesson);
+                    await setLessonStatusForDate(c, item.isoDate, item.dayName, 'completed', item.lesson, teachingMode);
                     renderTodaysWork();
                 });
             }
@@ -1816,7 +1840,10 @@
 
             if (student._supabaseSource) {
                 var lessonsThisMonth = getBillingLessonsInMonth(student, currentSelectedMonth);
-                var billing = computeBillingStats(lessonsThisMonth, getPeriodPayments(student.id, currentSelectedMonth), (Number(student.rate) || 0) * 1000);
+                // STEP 9B: computeBillingStats() (từ STEP 9A) tự cộng lessons[i].rate cho từng lesson
+                // completed — KHÔNG còn cần quy đổi student.rate*1000 để truyền vào nữa (tham số đó bị
+                // billing.js CHỦ Ý bỏ qua từ STEP 9A).
+                var billing = computeBillingStats(lessonsThisMonth, getPeriodPayments(student.id, currentSelectedMonth));
                 var totalPaid = billing.collected;
                 var status = computePeriodStatus(totalPaid, billing.expected);
 
@@ -2106,26 +2133,33 @@
                 if (!pass) console.warn('[FinanceCoreV1 TEST FAIL] ' + name + ': expected ' + expected + ', got ' + actual);
             }
 
-            // CASE 1: 8 completed lessons, rate = 200.000 (VNĐ đầy đủ) -> Expected = 1.600.000
+            // STEP 9A đã đổi computeBillingStats() sang cộng lessons[i].rate cho từng lesson
+            // completed (KHÔNG còn dùng tham số rate thứ 3 để tính expected nữa) — STEP 9C: cập
+            // nhật lại fixture để mỗi lesson TỰ mang đúng rate (200.000, giống hệt số cũ dùng làm
+            // scalar trước đây) thay vì trông chờ vào tham số thứ 3 (đã bị billing.js CHỦ Ý bỏ qua).
+            // Nhờ vậy test này thật sự xác nhận Expected lấy từ lesson.rate, không phải "vô tình
+            // đúng" vì cùng 1 số 200.000 xuất hiện ở cả 2 nơi.
+
+            // CASE 1: 8 completed lessons, mỗi lesson.rate = 200.000 (VNĐ đầy đủ) -> Expected = 1.600.000
             var lessons8 = [];
-            for (var i = 0; i < 8; i++) lessons8.push({ status: 'completed', duration: 1 });
-            var c1 = computeBillingStats(lessons8, [], 200000);
+            for (var i = 0; i < 8; i++) lessons8.push({ status: 'completed', duration: 1, rate: 200000 });
+            var c1 = computeBillingStats(lessons8, []);
             check('CASE1 Expected = 1.600.000', c1.expected, 1600000);
 
             // CASE 2: Expected 1.600.000, Collected 1.000.000 -> Outstanding 600.000
-            var c2 = computeBillingStats(lessons8, [{ amount: 1000000, status: 'paid' }], 200000);
+            var c2 = computeBillingStats(lessons8, [{ amount: 1000000, status: 'paid' }]);
             check('CASE2 Collected = 1.000.000', c2.collected, 1000000);
             check('CASE2 Outstanding = 600.000', c2.outstanding, 600000);
 
             // CASE 3: lẫn thêm lesson cancelled -> KHÔNG được tính thêm tiền (giữ đúng rule hiện tại)
-            var lessonsWithCancelled = lessons8.concat([{ status: 'cancelled', duration: 1 }]);
-            var c3 = computeBillingStats(lessonsWithCancelled, [], 200000);
+            var lessonsWithCancelled = lessons8.concat([{ status: 'cancelled', duration: 1, rate: 200000 }]);
+            var c3 = computeBillingStats(lessonsWithCancelled, []);
             check('CASE3 cancelled không tính tiền', c3.expected, 1600000);
             check('CASE3 completedLessonCount vẫn đúng 8', c3.completedLessonCount, 8);
 
             // CASE 4: lẫn thêm lesson scheduled -> KHÔNG được tính thêm tiền (giữ đúng rule hiện tại)
-            var lessonsWithScheduled = lessons8.concat([{ status: 'scheduled', duration: 1 }]);
-            var c4 = computeBillingStats(lessonsWithScheduled, [], 200000);
+            var lessonsWithScheduled = lessons8.concat([{ status: 'scheduled', duration: 1, rate: 200000 }]);
+            var c4 = computeBillingStats(lessonsWithScheduled, []);
             check('CASE4 scheduled không tính tiền', c4.expected, 1600000);
             check('CASE4 completedLessonCount vẫn đúng 8', c4.completedLessonCount, 8);
 
@@ -2134,7 +2168,7 @@
                 { amount: 500000, status: 'pending' },
                 { amount: 300000, status: 'cancelled' },
                 { amount: 700000, status: 'paid' }
-            ], 200000);
+            ]);
             check('CASE5 chỉ cộng payment paid/partial', c5.collected, 700000);
 
             // CASE 6: payment thuộc period khác KHÔNG được cộng nhầm — test ở tầng caller
@@ -2152,17 +2186,28 @@
             if (hadBackup) paymentsCacheByStudent[fakeId] = backupCache; else delete paymentsCacheByStudent[fakeId];
 
             // CASE 7: Collected >= Expected -> Outstanding không âm (clamp về 0, KHÔNG đổi business rule)
-            var c7a = computeBillingStats(lessons8, [{ amount: 1600000, status: 'paid' }], 200000); // Collected = Expected
+            var c7a = computeBillingStats(lessons8, [{ amount: 1600000, status: 'paid' }]); // Collected = Expected
             check('CASE7a Outstanding = 0 khi Collected = Expected', c7a.outstanding, 0);
-            var c7b = computeBillingStats(lessons8, [{ amount: 2000000, status: 'paid' }], 200000); // Collected > Expected
+            var c7b = computeBillingStats(lessons8, [{ amount: 2000000, status: 'paid' }]); // Collected > Expected
             check('CASE7b Outstanding clamp về 0 khi Collected > Expected', c7b.outstanding, 0);
             check('CASE7b Collected vẫn giữ giá trị thật, không bị clamp', c7b.collected, 2000000);
 
             // CASE 8: không có lessons/payments -> tất cả = 0
-            var c8 = computeBillingStats([], [], 200000);
+            var c8 = computeBillingStats([], []);
             check('CASE8 Expected = 0 khi không có lesson', c8.expected, 0);
             check('CASE8 Collected = 0 khi không có payment', c8.collected, 0);
             check('CASE8 Outstanding = 0 khi không có gì', c8.outstanding, 0);
+
+            // CASE 9 (STEP 9C — mới thêm): 3 lesson completed với rate KHÁC NHAU (đúng tình huống
+            // Online/Offline pricing khác nhau theo từng buổi) -> Expected PHẢI là tổng từng
+            // lesson.rate, không phải count × 1 rate cố định — xác nhận trực tiếp semantics STEP 9A.
+            var lessonsMixedRate = [
+                { status: 'completed', duration: 1, rate: 150000 },
+                { status: 'completed', duration: 1, rate: 180000 },
+                { status: 'completed', duration: 1, rate: 200000 }
+            ];
+            var c9 = computeBillingStats(lessonsMixedRate, []);
+            check('CASE9 Expected = tổng lesson.rate khác nhau (530.000)', c9.expected, 530000);
 
             var failed = results.filter(function(r) { return !r.pass; });
             if (failed.length === 0) console.log('[FinanceCoreV1] ✅ Tất cả ' + results.length + ' test case PASS.');
@@ -2202,15 +2247,15 @@
         }
 
         // Tiền PHẢI THU trong 1 tháng — công thức thật nay nằm DUY NHẤT trong computeBillingStats()
-        // (Finance Core V1). Hàm này CHỈ còn là adapter giữ nguyên unit "nghìn đồng" như trước (rất
-        // nhiều template Finance Dashboard đang tự nhân lại ×1000 qua fmt()/thủ công) — KHÔNG tự viết
-        // công thức rate×count ở đây nữa. computeBillingStats() cần rate ở VNĐ đầy đủ nên phải nhân
-        // ×1000 TRƯỚC khi gọi (students.rate lưu "nghìn đồng"), rồi chia lại ×1000 sau khi nhận kết
-        // quả để giữ đúng unit "nghìn đồng" mà các caller cũ của hàm này đang mong đợi.
+        // (Finance Core V1), tự cộng lessons[i].rate cho từng lesson completed (STEP 9A) — KHÔNG
+        // còn cần quy đổi students.rate*1000 để truyền vào nữa (STEP 9B: đã bỏ tham số đó, vì
+        // billing.js CHỦ Ý bỏ qua nó từ STEP 9A). Hàm này CHỈ còn là adapter giữ nguyên unit "nghìn
+        // đồng" ở RETURN (rất nhiều template Finance Dashboard đang tự nhân lại ×1000 qua
+        // fmt()/thủ công) — chia lại /1000 sau khi nhận kết quả VNĐ đầy đủ từ computeBillingStats()
+        // để giữ đúng unit "nghìn đồng" mà các caller cũ của hàm này đang mong đợi.
         function getMoneyInMonth(student, monthKey) {
             var lessons = getBillingLessonsInMonth(student, monthKey);
-            var rateVnd = (Number(student.rate) || 0) * 1000;
-            return computeBillingStats(lessons, [], rateVnd).expected / 1000;
+            return computeBillingStats(lessons, []).expected / 1000;
         }
 
         // Tiền ĐÃ THU trong 1 kỳ (tháng) — delegate cho computeBillingStats() (Finance Core V1), giữ
@@ -2224,12 +2269,12 @@
 
         // Tiền CÒN PHẢI THU — delegate cho computeBillingStats() (Finance Core V1): Outstanding =
         // max(0, Expected - Collected), giữ nguyên clamp về 0 khi thu vượt (KHÔNG tự đổi rule).
-        // rate phải quy đổi sang VNĐ đầy đủ (×1000) trước khi gọi — xem giải thích ở getMoneyInMonth().
+        // STEP 9B: Expected nay đến từ lessons[i].rate (STEP 9A), không cần quy đổi student.rate*1000
+        // nữa — xem giải thích ở getMoneyInMonth().
         function getMoneyRemainingInMonth(student, monthKey) {
             var lessons = getBillingLessonsInMonth(student, monthKey);
             var payments = student._supabaseSource ? getPeriodPayments(student.id, monthKey) : [];
-            var rateVnd = (Number(student.rate) || 0) * 1000;
-            return computeBillingStats(lessons, payments, rateVnd).remaining;
+            return computeBillingStats(lessons, payments).remaining;
         }
 
         // Lấy tất cả các ngày trong tháng mà có buổi dạy (gộp tất cả học sinh)
@@ -2238,13 +2283,35 @@
             var monthKey = getMonthKey(year, month);
             var map = {};
             classList.forEach(function(st) {
-                var sessions = getSessionsInMonth(st, monthKey);
                 var status = getClassCardFeeStatus(st, monthKey, getMoneyInMonth(st, monthKey) * 1000);
                 var paid = status === 'paid';
-                sessions.forEach(function(dateStr) { // "dd/MM"
-                    if (!map[dateStr]) map[dateStr] = [];
-                    map[dateStr].push({ student: st, paid: paid, status: status });
-                });
+                if (st._supabaseSource) {
+                    // STEP 9D: lấy TRỰC TIẾP từng lesson completed thật trong tháng từ
+                    // lessonsCacheByStudent (đúng y hệt filter mà getSessionsInMonth() dùng để ra
+                    // "dd/MM" — completed + đúng tháng) để mỗi entry mang theo `lesson` thật, cho phép
+                    // Finance day-grid cộng đúng lessons.rate (historical snapshot) thay vì
+                    // student.rate (giá hiện tại) — xem đoạn tính totalDay bên dưới. Dùng .forEach
+                    // trên MẢNG LESSON THẬT (1 phần tử = 1 lesson) nên tự động xử lý đúng trường hợp
+                    // 1 student có >1 lesson completed trong cùng 1 ngày (mỗi lesson một entry riêng,
+                    // cộng dồn đủ — giống hệt cách sessions.forEach() cũ vốn đã push trùng dateStr
+                    // nhiều lần cho trường hợp này, không giảm/tăng số entry mỗi ngày).
+                    var cache = lessonsCacheByStudent[st.id] || [];
+                    cache.forEach(function(l) {
+                        if (l.status !== 'completed' || !l.scheduled_date || l.scheduled_date.slice(0, 7) !== monthKey) return;
+                        var parts = l.scheduled_date.split('-'); // yyyy-mm-dd
+                        var dateStr = parts[2] + '/' + parts[1]; // giữ đúng key "dd/MM" như cũ
+                        if (!map[dateStr]) map[dateStr] = [];
+                        map[dateStr].push({ student: st, lesson: l, paid: paid, status: status });
+                    });
+                } else {
+                    // Local-only (không có public.lessons): giữ NGUYÊN behavior cũ — chỉ có ngày từ
+                    // attendance[], không có lesson thật để gắn snapshot.
+                    var sessions = getSessionsInMonth(st, monthKey); // mảng "dd/MM"
+                    sessions.forEach(function(dateStr) {
+                        if (!map[dateStr]) map[dateStr] = [];
+                        map[dateStr].push({ student: st, paid: paid, status: status });
+                    });
+                }
             });
             return map;
         }
@@ -2513,7 +2580,12 @@
 
                 if (entries.length > 0) {
                     var totalDay = 0;
-                    entries.forEach(function(e) { totalDay += e.student.rate; });
+                    // STEP 9D: entry có lesson thật (Supabase, xem buildDayMap()) -> cộng đúng
+                    // lesson.rate (snapshot VNĐ đầy đủ tại thời điểm tạo, đã tự chọn đúng
+                    // online_rate/offline_rate — KHÔNG dùng lại student.rate hiện tại). Chia /1000 vì
+                    // fmt() bên dưới nhân lại ×1000 (totalDay giữ đúng unit "nghìn đồng" như trước).
+                    // Entry KHÔNG có lesson (local-only, attendance-based) -> giữ NGUYÊN behavior cũ.
+                    entries.forEach(function(e) { totalDay += e.lesson ? (Number(e.lesson.rate) || 0) / 1000 : (Number(e.student.rate) || 0); });
                     var totalDiv = document.createElement('div');
                     totalDiv.style.cssText = 'font-size:11px; font-weight:bold; color:' + (hasPaid && !hasUnpaid ? '#10b981' : '#ef4444') + '; margin-bottom:3px;';
                     totalDiv.innerText = fmt(totalDay);
@@ -2777,11 +2849,15 @@
         function refreshMonthMoneyDisplay(student) {
             var moneyEl = document.getElementById('profile-month-money');
             var countEl = document.getElementById('profile-month-session-count');
+            // STEP 9B: rateVnd VẪN được giữ lại — không dùng để tính billing nữa (computeBillingStats()
+            // đã bỏ qua tham số rate từ STEP 9A, expected nay đến từ lessons[i].rate) nhưng vẫn cần cho
+            // caption "rateVnd đ × N buổi" hiển thị bên dưới (mục UI hiển thị current configured rate,
+            // KHÔNG phải billing calculation — giữ nguyên label/behavior theo đúng yêu cầu STEP 9B mục 6).
             var rateVnd = (Number(student.rate) || 0) * 1000;
 
             if (student._supabaseSource) {
                 var monthLessons = getBillingLessonsInMonth(student, currentSelectedMonth);
-                var billing = computeBillingStats(monthLessons, [], rateVnd);
+                var billing = computeBillingStats(monthLessons, []);
                 var doneCount = billing.completedCount, totalHours = billing.hours;
                 var totalMoney = billing.expected;
                 if (moneyEl) moneyEl.innerText = totalMoney.toLocaleString('vi-VN') + ' đ';
@@ -2792,7 +2868,7 @@
                 var doneCountLocal = (student.attendance[currentSelectedMonth] || []).length;
                 var totalMoneyLocal = computeBillingStats(
                     Array.from({ length: doneCountLocal }, function() { return { status: 'completed', duration: 0 }; }),
-                    [], rateVnd
+                    []
                 ).expected;
                 if (moneyEl) moneyEl.innerText = totalMoneyLocal.toLocaleString('vi-VN') + ' đ';
                 if (countEl) countEl.innerText = "(" + doneCountLocal + " buổi đã dạy"
@@ -2810,7 +2886,6 @@
             var box = document.getElementById('profile-alltime-stats');
             if (!box) return;
             var cache = lessonsCacheByStudent[student.id] || [];
-            var rateVnd = (Number(student.rate) || 0) * 1000;
             // Mục 4 (TỔNG QUAN TÀI CHÍNH): "Đã thu" = tổng amount của TẤT CẢ payments (mọi kỳ, không
             // chỉ tháng đang xem) có status 'paid' hoặc 'partial' — lấy từ public.payments qua cache
             // đã nạp sẵn (paymentsCacheByStudent), KHÔNG hard-code. "Còn phải thu" = Tiền đã dạy - Đã
@@ -2825,7 +2900,9 @@
             // tính tiền" / "chỉ paid+partial tính đã thu" / "clamp outstanding >= 0" nhưng viết lại
             // 2 lần). Nay delegate 100% cho Billing Core (Finance Core V1) — kết quả toán học giống
             // hệt bản gốc, chỉ còn 1 công thức duy nhất trong toàn app (đúng mục 3/6 STEP 8D).
-            var billing = computeBillingStats(cache, paymentsAll, rateVnd);
+            // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate — không còn cần
+            // quy đổi students.rate*1000 để truyền vào nữa.
+            var billing = computeBillingStats(cache, paymentsAll);
             var sessions = billing.completedCount, hours = billing.hours, money = billing.expected,
                 collected = billing.collected, remaining = billing.remaining;
             document.getElementById('profile-alltime-sessions').innerText = sessions;
@@ -3332,11 +3409,12 @@
             var completed = 0, cancelled = 0, absent = 0, scheduled = 0;
             var thisMonth = getLocalIsoDate(new Date()).slice(0, 7);
             var tuitionThisMonth = 0;
-            var rateVnd = (Number(student.rate) || 0) * 1000;
             cache.forEach(function(l) {
                 if (l.status === 'completed') {
                     completed++;
-                    if (l.scheduled_date && l.scheduled_date.slice(0, 7) === thisMonth) tuitionThisMonth += rateVnd;
+                    // STEP 9C: dùng đúng lesson.rate (snapshot VNĐ đầy đủ của TỪNG lesson, đã tự chọn
+                    // đúng online_rate/offline_rate lúc tạo) — KHÔNG dùng lại student.rate hiện tại.
+                    if (l.scheduled_date && l.scheduled_date.slice(0, 7) === thisMonth) tuitionThisMonth += (Number(l.rate) || 0);
                 } else if (l.status === 'cancelled') cancelled++;
                 else if (l.status === 'absent') absent++;
                 else scheduled++;
@@ -3809,6 +3887,13 @@
                 name: student.name || 'Không tên',
                 subject: student.subject || '',
                 rate: student.rate != null ? student.rate : 0,
+                // STEP 5 — MAP ONLINE/OFFLINE PRICING INTO CLASSLIST: chỉ thêm mapping cho 2 cột
+                // MỚI trên public.students, KHÔNG đổi đơn vị (giữ nguyên "nghìn đồng" như rate ở
+                // trên, quy đổi VNĐ đầy đủ vẫn là việc của caller ở các bước sau, giống convention
+                // rate hiện có). KHÔNG suy luận/fallback từ `rate` — học sinh legacy (chỉ có rate,
+                // chưa có online_rate/offline_rate) phải giữ nguyên null cho 2 field này.
+                online_rate: student.online_rate != null ? student.online_rate : null,
+                offline_rate: student.offline_rate != null ? student.offline_rate : null,
                 // BUG FIX: duration của lịch cố định nằm ở public.student_schedules.duration
                 // (scheduleForStudent.duration), KHÔNG phải public.students.duration (cột này
                 // luôn NULL với học sinh Supabase). Trước đây đọc nhầm student.duration khiến
@@ -4671,10 +4756,10 @@
                 elHours.innerText = totalHours;
             }
 
-            // ----- TỔNG TIỀN ĐÃ DẠY: cần cả lessons VÀ students (để lấy đúng rate từng học sinh) -----
-            // Gộp completedLessons theo student rồi gọi computeBillingStats() cho từng học sinh
-            // (Finance Core V1) — kết quả toán học giống hệt "mỗi lesson × rate × 1000" trước đây,
-            // nhưng công thức chỉ còn nằm ở 1 nơi duy nhất.
+            // ----- TỔNG TIỀN ĐÃ DẠY: gộp completedLessons theo student rồi gọi computeBillingStats()
+            // cho từng học sinh (Finance Core V1) — STEP 9A/9B: expected = tổng lesson.rate (snapshot
+            // VNĐ của từng lesson), KHÔNG còn dùng students.rate nữa; giữ nguyên điều kiện `studentsOk`
+            // ở dưới để không đổi behavior tải dữ liệu ngoài phạm vi STEP 9B.
             var totalTaught = null;
             if (lessonsOk && studentsOk) {
                 totalTaught = 0;
@@ -4684,9 +4769,9 @@
                     lessonsByStudentForRevenue[l.student_id].push(l);
                 });
                 Object.keys(lessonsByStudentForRevenue).forEach(function(sid) {
-                    var st = studentById[sid];
-                    var rate = ((st && st.rate != null) ? Number(st.rate) : 0) * 1000; // quy đổi "nghìn đồng" -> VNĐ đầy đủ cho computeBillingStats()
-                    totalTaught += computeBillingStats(lessonsByStudentForRevenue[sid], [], rate).expected;
+                    // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate cho từng lesson
+                    // completed — không còn cần quy đổi students.rate*1000 để truyền vào nữa.
+                    totalTaught += computeBillingStats(lessonsByStudentForRevenue[sid], []).expected;
                 });
                 elRevenue.innerText = totalTaught.toLocaleString('vi-VN') + ' đ';
             } else {
@@ -4776,8 +4861,8 @@
             function statsForStudent(s) {
                 var lessons = lessonsByStudent[s.id] || []; // đã được caller lọc sẵn chỉ còn completed
                 var pays = paymentsByStudent[s.id] || [];
-                var rate = (s.rate != null ? Number(s.rate) : 0) * 1000; // "nghìn đồng" -> VNĐ đầy đủ
-                var billing = computeBillingStats(lessons, pays, rate); // Finance Core V1 — nguồn duy nhất
+                // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate — bỏ quy đổi s.rate*1000.
+                var billing = computeBillingStats(lessons, pays); // Finance Core V1 — nguồn duy nhất
                 return { sessions: billing.completedCount, hours: billing.hours, taught: billing.expected, collected: billing.collected, remaining: billing.remaining };
             }
 
@@ -5017,8 +5102,8 @@
             raw.students.forEach(function(s) {
                 var lessons = lessonsByStudent[s.id] || [];
                 var pays = paymentsByStudent[s.id] || [];
-                var rateVnd = (s.rate != null ? Number(s.rate) : 0) * 1000; // "nghìn đồng" -> VNĐ đầy đủ cho computeBillingStats()
-                var billing = computeBillingStats(lessons, pays, rateVnd);
+                // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate — bỏ quy đổi s.rate*1000.
+                var billing = computeBillingStats(lessons, pays);
                 taught += billing.expected;
                 collected += billing.collected;
                 sessions += billing.completedCount;
@@ -5052,9 +5137,9 @@
             var byStudent = raw.students.map(function(s) {
                 var lessons = lessonsByStudent[s.id] || [];
                 lessons.forEach(function(l) { if (lessonAnalytics.hasOwnProperty(l.status)) lessonAnalytics[l.status]++; });
-                var rate = (s.rate != null ? Number(s.rate) : 0) * 1000; // "nghìn đồng" -> VNĐ đầy đủ
                 var pays = paymentsByStudent[s.id] || [];
-                var billing = computeBillingStats(lessons, pays, rate);
+                // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate — bỏ quy đổi s.rate*1000.
+                var billing = computeBillingStats(lessons, pays);
                 var sessions = billing.completedCount, hours = billing.hours, taught = billing.expected, collected = billing.collected, remaining = billing.remaining;
                 return {
                     id: s.id, name: s.name || '(Chưa có tên)', tutorId: s.tutor_id || '', tutorName: tutorNameById[s.tutor_id] || '—',
@@ -5435,10 +5520,10 @@
                 var scheduled = inRange.filter(function(l) { return l.status === 'scheduled'; });
                 var cancelled = inRange.filter(function(l) { return l.status === 'cancelled'; });
                 var hours = completed.reduce(function(sum, l) { return sum + (Number(l.duration) || 0); }, 0);
-                var rate = (Number(st.rate) || 0) * 1000; // "nghìn đồng" -> VNĐ đầy đủ cho computeBillingStats()
                 var periodPayments = [];
                 if (st._supabaseSource) range.months.forEach(function(mk) { periodPayments = periodPayments.concat(getPeriodPayments(st.id, mk)); });
-                var billing = computeBillingStats(inRange, periodPayments, rate); // Finance Core V1 — nguồn duy nhất
+                // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate — bỏ quy đổi st.rate*1000.
+                var billing = computeBillingStats(inRange, periodPayments); // Finance Core V1 — nguồn duy nhất
                 var taught = billing.expected, collected = billing.collected, remaining = billing.remaining;
                 var lastCompletedDate = null;
                 lessons.forEach(function(l) { if (l.status === 'completed' && l.scheduled_date && (!lastCompletedDate || l.scheduled_date > lastCompletedDate)) lastCompletedDate = l.scheduled_date; });
@@ -5481,7 +5566,8 @@
                 if (!st._supabaseSource) return;
                 var monthLessons = (lessonsCacheByStudent[st.id] || []).filter(function(l) { return l.scheduled_date && l.scheduled_date.slice(0, 7) === monthKey; });
                 allSessions += monthLessons.length;
-                var billing = computeBillingStats(monthLessons, getPeriodPayments(st.id, monthKey), (Number(st.rate) || 0) * 1000); // Finance Core V1
+                // STEP 9B: computeBillingStats() (STEP 9A) tự cộng lessons[i].rate — bỏ quy đổi st.rate*1000.
+                var billing = computeBillingStats(monthLessons, getPeriodPayments(st.id, monthKey)); // Finance Core V1
                 completedSessions += billing.completedCount;
                 taught += billing.expected;
                 collected += billing.collected;
@@ -6762,9 +6848,18 @@
             var mk = currentSelectedMonth;
             var sessions = (student.attendance && student.attendance[mk]) ? student.attendance[mk] : [];
             var totalSessions = sessions.length;
+            // STEP 9G: exportInvoice() CHỈ đọc student.attendance — field này LUÔN rỗng ({}) cho học
+            // sinh Supabase (xem comment "KHÔNG dùng student.attendance... cho học sinh Supabase" ở
+            // mapSupabaseStudentToClass()/khu vực Finance Dashboard phía trên) nên tính năng này CHỈ
+            // từng hoạt động cho học sinh local-only (chưa có public.lessons thật) — không có
+            // lesson.rate nào để đọc, "học phí/buổi" duy nhất từng áp dụng cho các buổi này chính là
+            // student.rate hiện tại. Vì vậy gán rate NGAY TRÊN từng lesson giả lập (thay vì trông chờ
+            // computeBillingStats() dùng scalar rate đã bị bỏ từ STEP 9A) để khôi phục ĐÚNG kết quả
+            // toán học như trước STEP 9A, KHÔNG áp dụng cho lesson Supabase thật (không tồn tại ở đây).
+            var rateVnd = (Number(student.rate) || 0) * 1000;
             var totalMoney = computeBillingStats(
-                Array.from({ length: totalSessions }, function() { return { status: 'completed', duration: 0 }; }),
-                [], (Number(student.rate) || 0) * 1000
+                Array.from({ length: totalSessions }, function() { return { status: 'completed', duration: 0, rate: rateVnd }; }),
+                []
             ).expected;
             var paid = getClassCardFeeStatus(student, mk, totalMoney) === 'paid';
 
@@ -7340,9 +7435,14 @@
         function buildInvoiceHtml(student, mk) {
             var sessions = (student.attendance && student.attendance[mk]) ? student.attendance[mk] : [];
             var totalSessions = sessions.length;
+            // STEP 9G: xem giải thích đầy đủ ở exportInvoice() — buildInvoiceHtml() dùng chung
+            // student.attendance (luôn rỗng cho học sinh Supabase), nên đây cũng CHỈ là flow
+            // local-only; gán rate trực tiếp trên từng lesson giả lập để khôi phục đúng kết quả toán
+            // học như trước STEP 9A.
+            var rateVnd = (Number(student.rate) || 0) * 1000;
             var totalMoney = computeBillingStats(
-                Array.from({ length: totalSessions }, function() { return { status: 'completed', duration: 0 }; }),
-                [], (Number(student.rate) || 0) * 1000
+                Array.from({ length: totalSessions }, function() { return { status: 'completed', duration: 0, rate: rateVnd }; }),
+                []
             ).expected;
             var paid = getClassCardFeeStatus(student, mk, totalMoney) === 'paid';
             var evalText = (student.monthEvals && student.monthEvals[mk]) || '';

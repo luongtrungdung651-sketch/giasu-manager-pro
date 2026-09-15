@@ -21,7 +21,7 @@
 //     helper dùng chung, KHÔNG riêng của Calendar (getDayOfWeekNumber chỉ đang được
 //     Calendar gọi nhưng vẫn để nguyên tại chỗ cũ — không bắt buộc phải di chuyển).
 //   - loadStudentLessons / findLessonForDate / setLessonStatusForDate /
-//     removeLessonForDate / openLessonDetailModal: thuộc
+//     removeLessonForDate / openLessonDetailModal / parseLessonJournal: thuộc
 //     js/lessons/lessons.js (STEP 7D) — Calendar chỉ GỌI, không sở hữu.
 //   - rebuildAttendanceBridgeFromLessons / refreshMonthMoneyDisplay / loadStudentPayments /
 //     refreshStudentProfileExtras: thuộc Student Profile / Finance — Calendar chỉ gọi để
@@ -54,7 +54,7 @@
 // rebuildAttendanceBridgeFromLessons, refreshMonthMoneyDisplay, loadStudentPayments,
 // refreshFeeStatusUI, renderPaymentHistory, refreshStudentProfileExtras) và từ
 // js/lessons/lessons.js (loadStudentLessons, findLessonForDate, setLessonStatusForDate,
-// removeLessonForDate, openLessonDetailModal) cùng js/core/utils.js
+// removeLessonForDate, openLessonDetailModal, parseLessonJournal) cùng js/core/utils.js
 // (escapeHtml, getLocalIsoDate, timeToFloat — đã expose qua window ở STEP 7B). Module này
 // KHÔNG import những thứ đó — module chạy SAU khi script chính VÀ các module trước
 // (core/students/lessons) đã chạy xong, nên tại thời điểm các hàm bên dưới THỰC SỰ được
@@ -68,7 +68,7 @@
 // "STEP 8C — ĐĂNG KÝ LẮNG NGHE" phía dưới) — Lessons không còn giữ tên hàm
 // renderAttendanceGrid trong code nữa. Cạnh còn lại là dependency MỘT CHIỀU: Calendar
 // gọi các hàm business logic của Lessons (loadStudentLessons/findLessonForDate/
-// setLessonStatusForDate/removeLessonForDate/openLessonDetailModal) để
+// setLessonStatusForDate/removeLessonForDate/openLessonDetailModal/parseLessonJournal) để
 // đọc/mutate dữ liệu — index.html/Students/Lessons/Finance/Reports KHÔNG import Calendar,
 // chỉ gọi hàm Calendar qua window (giống onclick="..." gọi hàm global). Không còn circular
 // dependency giữa Calendar và Lessons.
@@ -610,7 +610,11 @@ function renderTpCalendar() {
             monthTotal++;
             if (item.status === 'completed') {
                 monthCompleted++;
-                monthRevenue += (Number(item.student.rate) || 0) * 1000; // completed × rate × 1.000 (mục 14)
+                // STEP 9F: item.status === 'completed' đảm bảo item.lesson là lesson thật (xem
+                // getLessonItemsForDate()) -> phải cộng đúng lesson.rate (snapshot VNĐ đầy đủ tại
+                // thời điểm tạo, đã tự chọn đúng online_rate/offline_rate), KHÔNG dùng lại
+                // student.rate hiện tại. lesson.rate đã là VNĐ đầy đủ nên KHÔNG nhân ×1000 nữa.
+                monthRevenue += Number(item.lesson.rate) || 0;
             } else if (item.status === 'cancelled') {
                 monthCancelled++;
             } else if (item.status === 'scheduled') {
@@ -655,6 +659,22 @@ function renderTpCalendar() {
                 dotRow.appendChild(dot);
             });
             cell.appendChild(dotRow);
+
+            // Mục 13: indicator nhật ký cho các buổi ĐÃ HOÀN THÀNH — 📝 nếu tất cả buổi completed
+            // trong ngày đã có nhật ký, ⚠️ nếu còn ít nhất 1 buổi completed chưa ghi. Không đụng
+            // schema/database, chỉ đọc lessons.notes đã có qua parseLessonJournal().
+            var completedItems = items.filter(function(i) { return i.status === 'completed'; });
+            if (completedItems.length > 0) {
+                var missingJournal = completedItems.some(function(i) {
+                    var j = parseLessonJournal(i.lesson ? i.lesson.notes : '');
+                    return !(j.content || j.feedback || j.homework);
+                });
+                var journalIndicator = document.createElement('div');
+                journalIndicator.style.cssText = 'font-size:11px; margin-top:2px;';
+                journalIndicator.title = missingJournal ? 'Có buổi đã dạy nhưng chưa ghi nhật ký' : 'Đã ghi nhật ký đầy đủ';
+                journalIndicator.innerText = missingJournal ? '⚠️' : '📝';
+                cell.appendChild(journalIndicator);
+            }
         }
 
         cell.addEventListener('click', function() {
@@ -910,12 +930,15 @@ function renderAttendanceGrid(student) {
                 : (!student._supabaseSource && student.attendance[currentSelectedMonth].includes(dateStr) ? 'completed' : 'scheduled');
             let meta = statusMeta[status] || statusMeta.scheduled;
 
-            // Học phí là GIÁ CỐ ĐỊNH THEO BUỔI (không theo giờ) -> mỗi buổi "Đã học" luôn cộng
-            // đúng một lần Học phí/buổi, không nhân thêm số giờ. Nếu ra 0đ, đó LUÔN là do
-            // "Học phí/buổi" của học sinh này đang bằng 0 — cảnh báo rõ để tutor vào sửa.
+            // Học phí là GIÁ SNAPSHOT của TỪNG buổi (lessons.rate, đã tự chọn đúng online_rate/
+            // offline_rate lúc tạo) -> mỗi buổi "Đã học" cộng đúng lesson.rate của chính nó, KHÔNG
+            // dùng lại student.rate hiện tại (STEP 9F). Nếu ra 0đ, đó LUÔN là do lesson.rate đang
+            // bằng 0/thiếu — cảnh báo rõ để tutor kiểm tra.
             let lessonMoneyHtml = '';
             if (student._supabaseSource && status === 'completed' && lesson) {
-                let lessonAmount = (Number(student.rate) || 0) * 1000;
+                // `lesson` đã được xác nhận non-null ở điều kiện if ngay trên -> lesson.rate là
+                // snapshot VNĐ đầy đủ, KHÔNG nhân ×1000.
+                let lessonAmount = Number(lesson.rate) || 0;
                 runningMoney += lessonAmount;
                 if (lessonAmount > 0) {
                     lessonMoneyHtml = '<div class="lesson-row-fee">' + lessonAmount.toLocaleString('vi-VN') + 'đ'
@@ -968,8 +991,20 @@ function renderAttendanceGrid(student) {
                 select.addEventListener('change', function(e) {
                     e.stopPropagation();
                     var chosenStatus = select.value; // mục 14: giá trị tường minh từ control, không toggle mù
+                    // STEP 7 — entry point A: nếu buổi học NÀY CHƯA tồn tại (lesson == null) thì đổi
+                    // status ở đây sẽ TẠO lesson mới (qua setLessonStatusForDate() -> createLesson())
+                    // -> phải xác định teaching_mode TRƯỚC. Lesson ĐÃ tồn tại thì KHÔNG hỏi mode
+                    // (mục 7 đề bài — không hỏi lại/không đổi rate của lesson cũ).
+                    var teachingMode;
+                    if (!lesson) {
+                        teachingMode = resolveStudentTeachingMode(student);
+                        if (teachingMode === null) {
+                            select.value = status; // Case C, tutor cancel -> khôi phục lựa chọn cũ trên dropdown
+                            return; // KHÔNG tạo lesson
+                        }
+                    }
                     select.disabled = true; // chặn double-đổi trong lúc đang gọi Supabase
-                    setLessonStatusForDate(student, isoDate, dayName, chosenStatus, lesson);
+                    setLessonStatusForDate(student, isoDate, dayName, chosenStatus, lesson, teachingMode);
                 });
                 item.appendChild(select);
 
