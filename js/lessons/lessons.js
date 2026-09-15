@@ -1,3 +1,62 @@
+var LD_JOURNAL_MARKERS = {
+    content: '[NỘI DUNG]',
+    feedback: '[NHẬN XÉT]',
+    homework: '[BÀI TẬP VỀ NHÀ]'
+};
+
+function parseLessonJournal(notes) {
+    var text = notes || '';
+
+    var hasMarker =
+        text.indexOf(LD_JOURNAL_MARKERS.content) !== -1 ||
+        text.indexOf(LD_JOURNAL_MARKERS.feedback) !== -1 ||
+        text.indexOf(LD_JOURNAL_MARKERS.homework) !== -1;
+
+    if (!hasMarker) {
+        return {
+            content: text.trim(),
+            feedback: '',
+            homework: ''
+        };
+    }
+
+    function extract(marker) {
+        var idx = text.indexOf(marker);
+        if (idx === -1) return '';
+
+        var start = idx + marker.length;
+        var rest = text.slice(start);
+
+        var nextIdx = -1;
+
+        [
+            LD_JOURNAL_MARKERS.content,
+            LD_JOURNAL_MARKERS.feedback,
+            LD_JOURNAL_MARKERS.homework
+        ].forEach(function(m) {
+            if (m === marker) return;
+
+            var i = rest.indexOf(m);
+            if (i !== -1 && (nextIdx === -1 || i < nextIdx)) {
+                nextIdx = i;
+            }
+        });
+
+        var section = nextIdx === -1
+            ? rest
+            : rest.slice(0, nextIdx);
+
+        return section.trim();
+    }
+
+    return {
+        content: extract(LD_JOURNAL_MARKERS.content),
+        feedback: extract(LD_JOURNAL_MARKERS.feedback),
+        homework: extract(LD_JOURNAL_MARKERS.homework)
+    };
+}
+window.parseLessonJournal = parseLessonJournal;
+
 // ============================================================================
 // js/lessons/lessons.js  —  STEP 7D: LESSONS MODULE
 // ============================================================================
