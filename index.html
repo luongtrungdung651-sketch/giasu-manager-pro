@@ -252,6 +252,7 @@
                 <button type="button" class="tp-nav-btn active" data-tp-page="today" onclick="switchTutorPage('today')">📅 Hôm nay</button>
                 <button type="button" class="tp-nav-btn" data-tp-page="calendar" onclick="switchTutorPage('calendar')">🗓️ Lịch dạy</button>
                 <button type="button" class="tp-nav-btn" data-tp-page="students" onclick="switchTutorPage('students')">👨‍🎓 Học sinh</button>
+                <button type="button" class="tp-nav-btn" data-tp-page="progress" onclick="switchTutorPage('progress')">📈 Tiến độ</button>
                 <!-- STEP 11E: chỉ thêm entry sidebar desktop — KHÔNG thêm mục thứ 7 vào
                      .tp-bottom-nav (đã đầy 6/6 slot, xem STEP_11E_A_UI_AUDIT.md mục 2/13).
                      GIỚI HẠN ĐÃ BIẾT: .tp-sidebar ẩn dưới 640px và .tp-bottom-nav KHÔNG được
@@ -530,6 +531,12 @@
                  List + Create + Edit + Detail(Tổng quan) — KHÔNG có nút xoá lớp (xem lý do
                  "NO HARD DELETE" trong group-class.js), KHÔNG có Enrollment/Session/Attendance
                  UI ở STEP này. ===== -->
+            <div id="tp-page-progress" class="tp-page">
+                <div class="block-card">
+                    <h3>📈 Tiến độ học tập</h3>
+                    <div id="progress-student-list"></div>
+                </div>
+            </div>
             <div id="tp-page-group-classes" class="tp-page">
             <div class="two-col">
                 <div class="block-card col-form">
@@ -3054,4 +3061,5 @@
         <div class="toast-icon">✅</div>
         <div class="toast-text"><strong></strong><span></span></div>
     </div>
+    <script type="module" src="./js/progress/progress.js"></script>
 </body></html>

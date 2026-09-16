@@ -1224,6 +1224,9 @@
             else if (page === 'settings') renderSettingsPage();
             else if (page === 'students') applyScheduleDefaultsToAddForm(); // mục 5: chỉ set giá trị mặc định cho form thêm mới, không đổi dữ liệu cũ
             else if (page === 'group-classes') loadGroupClassesIfNeeded(); // STEP 11E: load Supabase 1 lần rồi renderGroupClassList(), KHÔNG query lại mỗi lần chuyển tab
+            else if (page === 'progress') {
+                if (typeof initProgressModule === 'function') initProgressModule();
+            }
         }
 
         // Áp "Thời lượng mặc định" đã lưu trong Settings vào select-duration của form "Thêm Lớp Mới"
