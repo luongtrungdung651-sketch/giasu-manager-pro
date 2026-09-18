@@ -7,51 +7,218 @@ window.initProgressModule = initProgressModule;
 export async function initProgressModule() {
     console.log('Progress module initialized');
     const pageEl = document.getElementById('tp-page-progress');
-    pageEl.innerHTML = '<div class="block-card"><h3>📈 Tiến độ học tập</h3><div id="progress-student-list"></div></div>';
-    await loadStudents();
+    pageEl.innerHTML = `
+        <div class="block-card">
+            <h3>📈 Tiến độ học tập</h3>
+            
+            <h4>1-TO-1</h4>
+            <div id="progress-1to1-list">Đang tải...</div>
+            
+            <h4 style="margin-top:20px;">LỚP NHÓM</h4>
+            <div id="progress-group-list">Đang tải...</div>
+        </div>
+    `;
+    
+    await Promise.all([
+        load1to1Students(),
+        loadGroupClasses()
+    ]);
 }
 
-async function loadStudents() {
-    const listEl = document.getElementById('progress-student-list');
-    listEl.innerHTML = '<p>Đang tải...</p>';
-
-    const { data: students, error } = await supabaseClient
+async function load1to1Students() {
+    const listEl = document.getElementById('progress-1to1-list');
+    
+    // Fetch students
+    const { data: students, error: studError } = await supabaseClient
         .from('students')
         .select('id, name, subject')
         .eq('tutor_id', activeTutorId)
         .order('name');
 
-    if (error) {
-        console.error('Error loading students:', error);
-        listEl.innerHTML = '<p>Có lỗi xảy ra khi tải học sinh.</p>';
+    if (studError) {
+        listEl.innerHTML = '<p>Lỗi tải danh sách.</p>';
+        return;
+    }
+
+    // Fetch all 1-to-1 progress for this tutor to calculate averages in JS
+    const { data: progress, error: progError } = await supabaseClient
+        .from('student_progress')
+        .select('student_id, score')
+        .eq('source_type', 'one_to_one')
+        .eq('tutor_id', activeTutorId);
+
+    if (progError) {
+        listEl.innerHTML = '<p>Lỗi tải dữ liệu tiến độ.</p>';
         return;
     }
 
     if (!students || students.length === 0) {
-        listEl.innerHTML = '<p>Chưa có học sinh nào.</p>';
+        listEl.innerHTML = '<p>Chưa có học sinh 1-to-1.</p>';
         return;
     }
 
-    listEl.innerHTML = students.map(s => `
-        <div class="block-card" style="margin-bottom:10px; cursor:pointer;" onclick="openStudentProgress('${s.id}', '${escapeHtmlAttr(s.name)}', '${escapeHtmlAttr(s.subject || 'Chưa rõ môn')}')">
-            <div style="display:flex; justify-content:space-between;">
-                <strong>${escapeHtml(s.name)}</strong>
-                <span>${escapeHtml(s.subject || '')}</span>
+    // Map progress to student_id for quick lookup
+    const progressMap = {};
+    (progress || []).forEach(p => {
+        if (!progressMap[p.student_id]) progressMap[p.student_id] = [];
+        progressMap[p.student_id].push(Number(p.score));
+    });
+
+    listEl.innerHTML = students.map(s => {
+        const scores = progressMap[s.id] || [];
+        const avg = scores.length > 0 
+            ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)
+            : null;
+
+        const avgDisplay = avg !== null 
+            ? `<span style="font-weight:700; color:var(--accent);">${avg}</span>` 
+            : '<span style="color:var(--text-sub);">Chưa có dữ liệu</span>';
+
+        return `
+            <div class="block-card" style="margin-bottom:10px; cursor:pointer;" onclick="openStudentProgress('${s.id}', '${escapeHtmlAttr(s.name)}', '${escapeHtmlAttr(s.subject || 'Chưa rõ môn')}')">
+                <div style="display:flex; justify-content:space-between;">
+                    <strong>${escapeHtml(s.name)}</strong>
+                    <span>${escapeHtml(s.subject || '')}</span>
+                </div>
+                <div style="font-size:0.9em; color:var(--text-sub); margin-top:4px;">
+                    Điểm trung bình: ${avgDisplay}
+                </div>
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
-window.openStudentProgress = async function(studentId, studentName, subject) {
+async function loadGroupClasses() {
+    const listEl = document.getElementById('progress-group-list');
+
+    const { data: classes, error } = await supabaseClient
+        .from('group_classes')
+        .select('id, name')
+        .eq('tutor_id', activeTutorId)
+        .order('name');
+
+    if (error) {
+        listEl.innerHTML = '<p>Lỗi tải lớp nhóm.</p>';
+        return;
+    }
+
+    if (!classes || classes.length === 0) {
+        listEl.innerHTML = '<p>Chưa có lớp nhóm.</p>';
+        return;
+    }
+
+    // Load enrollments to count students
+    const { data: enrollments } = await supabaseClient
+        .from('group_class_enrollments')
+        .select('group_class_id, student_id')
+        .in('group_class_id', classes.map(c => c.id))
+        .eq('status', 'active');
+
+    // Load latest group progress for all students in these classes for average calculation
+    const classIds = classes.map(c => c.id);
+    const { data: progress } = await supabaseClient
+        .from('student_progress')
+        .select('student_id, score, group_class_id, recorded_at')
+        .in('group_class_id', classIds)
+        .eq('source_type', 'group')
+        .eq('tutor_id', activeTutorId)
+        .order('recorded_at', { ascending: false });
+
+    listEl.innerHTML = classes.map(c => {
+        const classEnrollments = (enrollments || []).filter(e => e.group_class_id === c.id);
+        const studentCount = classEnrollments.length;
+        const studentIds = classEnrollments.map(e => e.student_id);
+        
+        // Calculate average: avg of latest progress per student
+        const latestProgress = [];
+        studentIds.forEach(sid => {
+            const studentRecords = (progress || []).filter(p => p.student_id === sid && p.group_class_id === c.id);
+            if (studentRecords.length > 0) {
+                latestProgress.push(Number(studentRecords[0].score));
+            }
+        });
+
+        const avg = latestProgress.length > 0
+            ? (latestProgress.reduce((a, b) => a + b, 0) / latestProgress.length).toFixed(1)
+            : null;
+
+        return `
+            <div class="block-card" style="margin-bottom:10px; cursor:pointer;" onclick="openGroupClassProgressDetail('${c.id}', '${escapeHtmlAttr(c.name)}')">
+                <div style="display:flex; justify-content:space-between;">
+                    <strong>${escapeHtml(c.name)}</strong>
+                    <span>${studentCount} học sinh</span>
+                </div>
+                <div style="font-size:0.9em; color:gray;">
+                    Điểm trung bình: ${avg !== null ? avg : 'Chưa có dữ liệu'}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+window.openGroupClassProgressDetail = async function(classId, className) {
     const pageEl = document.getElementById('tp-page-progress');
     pageEl.innerHTML = `
         <div class="block-card">
-            <button class="tp-nav-btn" onclick="initProgressModule()">← Quay lại danh sách</button>
-            <h3 style="margin-top:15px;">📈 Tiến độ: ${escapeHtml(studentName)} (${escapeHtml(subject)})</h3>
-            <div id="progress-detail-content">Đang tải chi tiết...</div>
+            <button class="tp-nav-btn" onclick="initProgressModule()">← Quay lại</button>
+            <h3 style="margin-top:15px;">${escapeHtml(className)}</h3>
+            <div id="group-detail-content">Đang tải...</div>
         </div>
     `;
-    await loadStudentProgressDetail(studentId, studentName, subject);
+
+    const detailEl = document.getElementById('group-detail-content');
+
+    // Load students in class
+    const { data: enrollments, error: enrollError } = await supabaseClient
+        .from('group_class_enrollments')
+        .select('student_id, students(id, name)')
+        .eq('group_class_id', classId)
+        .eq('status', 'active');
+
+    if (enrollError || !enrollments) {
+        detailEl.innerHTML = '<p>Lỗi tải học sinh.</p>';
+        return;
+    }
+
+    // Load latest progress for these students
+    const studentIds = enrollments.map(e => e.student_id);
+    const { data: progress, error: progError } = await supabaseClient
+        .from('student_progress')
+        .select('student_id, score')
+        .eq('group_class_id', classId)
+        .eq('source_type', 'group')
+        .eq('tutor_id', activeTutorId)
+        .order('recorded_at', { ascending: false });
+
+    // Calculate Average
+    const latestProgressMap = {};
+    (progress || []).forEach(p => {
+        if (!(p.student_id in latestProgressMap)) {
+            latestProgressMap[p.student_id] = Number(p.score);
+        }
+    });
+
+    const scores = Object.values(latestProgressMap);
+    const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : null;
+
+    detailEl.innerHTML = `
+        <div class="block-card" style="text-align:center; margin:15px 0;">
+            <div style="color:gray;">Điểm trung bình lớp</div>
+            <div style="font-size:2em; font-weight:bold;">${avg !== null ? avg : 'Chưa có'}</div>
+        </div>
+        <button class="tp-nav-btn" onclick="openProgressForm(null, null, 'Học sinh', 'Chưa rõ', '${classId}')">+ Thêm kết quả</button>
+        <div style="margin-top:10px;">
+            ${enrollments.map(e => {
+                const latestScore = latestProgressMap[e.student_id];
+                return `
+                    <div class="block-card" style="margin-bottom:5px; cursor:pointer; display:flex; justify-content:space-between;" onclick="openStudentProgress('${e.students.id}', '${escapeHtmlAttr(e.students.name)}', 'Lớp nhóm')">
+                        <strong>${escapeHtml(e.students.name)}</strong>
+                        <span>${latestScore !== undefined ? latestScore : 'Chưa có điểm'}</span>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
 };
 
 async function loadStudentProgressDetail(studentId, studentName, subject) {
@@ -185,7 +352,7 @@ function renderProgressChart(progress) {
     `;
 }
 
-window.openProgressForm = async function(studentId, progressId = null, studentName = 'Học sinh', subject = 'Chưa rõ môn') {
+window.openProgressForm = async function(studentId = null, progressId = null, studentName = 'Học sinh', subject = 'Chưa rõ môn', groupClassId = null) {
     let modal = document.getElementById('progress-modal');
 
     if (!modal) {
@@ -199,6 +366,7 @@ window.openProgressForm = async function(studentId, progressId = null, studentNa
     }
 
     let existing = null;
+    let contextSourceType = groupClassId ? 'group' : 'one_to_one';
 
     if (progressId) {
         const { data, error } = await supabaseClient
@@ -214,65 +382,105 @@ window.openProgressForm = async function(studentId, progressId = null, studentNa
         }
 
         existing = data;
+        contextSourceType = existing.source_type;
+        groupClassId = existing.group_class_id;
     }
 
     modal.innerHTML = `
-        <div class="modal-box">
-            <h3>${existing ? 'Sửa' : 'Thêm'} kết quả</h3>
+        <style>
+            .progress-modal-content {
+                max-width: 600px;
+                width: 95%;
+                margin: 20px auto;
+                background: var(--bg-card);
+                padding: 24px;
+                border-radius: var(--radius);
+                box-shadow: var(--shadow-lg);
+                border: 1px solid var(--border-color);
+                max-height: 90vh;
+                overflow-y: auto;
+            }
+            .progress-modal-header { margin-bottom: 20px; }
+            .progress-modal-header h3 { margin: 0; font-size: 1.2em; color: var(--text-main); }
+            .progress-modal-header p { margin: 5px 0 0; color: var(--text-sub); font-size: 0.9em; }
+            
+            .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+            
+            label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.75em; color: var(--text-sub); text-transform: uppercase; letter-spacing: 0.4px; }
+            input, select, textarea { width: 100%; padding: 10px; border: 1.5px solid var(--border-color); border-radius: 8px; box-sizing: border-box; font-size: 13px; background: var(--bg-card-sub); color: var(--text-main); font-family: 'Inter', sans-serif; }
+            input:focus, select:focus, textarea:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-dim); }
+            
+            .info-card { background: var(--bg-card-sub); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border-color); }
+            .info-card h4 { margin: 0 0 5px; font-size: 0.85em; color: var(--text-sub); text-transform: uppercase; }
+            .info-card p { margin: 0; font-size: 1em; font-weight: bold; color: var(--text-main); }
+            
+            .btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+            .btn-submit-form { min-width: 120px; }
+            
+            @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+        </style>
+        <div class="progress-modal-content">
+            <div class="progress-modal-header">
+                <h3>${existing ? 'Chỉnh sửa kết quả' : 'Thêm kết quả học tập'}</h3>
+                <p>Ghi nhận kết quả và đánh giá tiến độ học sinh</p>
+            </div>
+            
             <form id="progress-form">
-                <label>Nguồn kết quả</label>
-                <div style="display:flex; gap:16px; margin:8px 0 14px;">
-                    <label>
-                        <input type="radio" name="prog-source" value="one_to_one"
-                            ${(!existing || existing.source_type === 'one_to_one' || !existing.source_type) ? 'checked' : ''}>
-                        1-to-1
-                    </label>
-                    <label>
-                        <input type="radio" name="prog-source" value="group"
-                            ${(existing?.source_type === 'group') ? 'checked' : ''}>
-                        Lớp nhóm
-                    </label>
+                ${contextSourceType === 'group' ? `
+                    <div class="info-card">
+                        <h4>Lớp học</h4>
+                        <p>👥 ${groupClassId}</p>
+                    </div>
+                ` : `
+                    <div class="info-card">
+                        <h4>Học sinh</h4>
+                        <p>👤 ${escapeHtml(studentName)}</p>
+                    </div>
+                `}
+
+                ${contextSourceType === 'group' ? `
+                    <div class="form-grid">
+                        <div>
+                            <label for="prog-student">Học sinh</label>
+                            <select id="prog-student" required><option value="">Đang tải...</option></select>
+                        </div>
+                        <div>
+                            <label for="prog-group-session">Buổi học</label>
+                            <select id="prog-group-session"><option value="">Không chọn buổi</option></select>
+                        </div>
+                    </div>
+                ` : ''}
+
+                <div class="form-grid">
+                    <div>
+                        <label for="prog-date">Ngày đánh giá</label>
+                        <input type="date" id="prog-date" required>
+                    </div>
+                    <div>
+                        <label for="prog-score">Điểm</label>
+                        <input type="number" id="prog-score" min="0" max="10" step="0.1" placeholder="0 - 10" required>
+                    </div>
                 </div>
 
-                <div id="prog-group-fields" style="display:none;">
-                    <label for="prog-group-class">Lớp</label>
-                    <select id="prog-group-class">
-                        <option value="">Đang tải...</option>
-                    </select>
-
-                    <label for="prog-group-session">
-                        Buổi học <span style="font-weight:normal; color:gray;">(không bắt buộc)</span>
-                    </label>
-                    <select id="prog-group-session">
-                        <option value="">Không chọn buổi</option>
-                    </select>
+                <div class="form-grid">
+                    <div>
+                        <label for="prog-type">Loại đánh giá</label>
+                        <select id="prog-type">
+                            <option>Bài tập</option><option>Kiểm tra</option><option>Đề thi</option><option>Thi thử</option><option>Khác</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="prog-topic">Chủ đề</label>
+                        <input type="text" id="prog-topic" placeholder="Ví dụ: Hàm số">
+                    </div>
                 </div>
-
-                <label for="prog-date">Ngày</label>
-                <input type="date" id="prog-date" required>
-
-                <label for="prog-score">Điểm</label>
-                <input type="number" id="prog-score" min="0" max="10" step="0.1" placeholder="Điểm (0-10)" required>
-
-                <label for="prog-type">Loại đánh giá</label>
-                <select id="prog-type">
-                    <option>Bài tập</option>
-                    <option>Kiểm tra</option>
-                    <option>Đề thi</option>
-                    <option>Thi thử</option>
-                    <option>Đánh giá năng lực</option>
-                    <option>Khác</option>
-                </select>
-
-                <label for="prog-topic">Chủ đề</label>
-                <input type="text" id="prog-topic" placeholder="Chủ đề">
 
                 <label for="prog-comment">Nhận xét</label>
-                <textarea id="prog-comment" placeholder="Nhận xét"></textarea>
+                <textarea id="prog-comment" rows="4" placeholder="Nhận xét chi tiết..."></textarea>
 
-                <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
-                    <button type="button" class="btn-action-cancel" onclick="document.getElementById('progress-modal').style.display='none'">Hủy</button>
-                    <button type="submit" class="btn-action-save">Lưu</button>
+                <div class="btn-row">
+                    <button type="button" class="btn-secondary" onclick="document.getElementById('progress-modal').style.display='none'">Hủy</button>
+                    <button type="submit" class="btn-submit btn-submit-form">Lưu kết quả</button>
                 </div>
             </form>
         </div>
@@ -285,160 +493,44 @@ window.openProgressForm = async function(studentId, progressId = null, studentNa
     document.getElementById('prog-topic').value = existing?.topic || '';
     document.getElementById('prog-comment').value = existing?.comment || '';
 
-    const sourceInputs = [...document.querySelectorAll('input[name="prog-source"]')];
-    const groupFields = document.getElementById('prog-group-fields');
-    const groupClassEl = document.getElementById('prog-group-class');
-    const groupSessionEl = document.getElementById('prog-group-session');
+    if (contextSourceType === 'group') {
+        const studentEl = document.getElementById('prog-student');
+        const sessionEl = document.getElementById('prog-group-session');
 
-    async function loadStudentGroupClasses(selectedId = null, selectedSessionId = null) {
-        groupClassEl.innerHTML = '<option value="">Đang tải lớp...</option>';
-        groupSessionEl.innerHTML = '<option value="">Không chọn buổi</option>';
-
-        const { data: enrollments, error } = await supabaseClient
+        const { data: enrollments } = await supabaseClient
             .from('group_class_enrollments')
-            .select('group_class_id')
-            .eq('student_id', studentId)
+            .select('student_id, students(name)')
+            .eq('group_class_id', groupClassId)
             .eq('status', 'active');
+            
+        studentEl.innerHTML = '<option value="">Chọn học sinh</option>' +
+            (enrollments || []).map(e => `<option value="${e.student_id}" ${e.student_id === studentId ? 'selected' : ''}>${escapeHtml(e.students.name)}</option>`).join('');
 
-        if (error) throw error;
-
-        const classIds = [...new Set(
-            (enrollments || [])
-                .map(e => e.group_class_id)
-                .filter(Boolean)
-        )];
-
-        if (!classIds.length) {
-            groupClassEl.innerHTML = '<option value="">Học sinh chưa thuộc lớp nhóm</option>';
-            return;
-        }
-
-        const { data: classes, error: classError } = await supabaseClient
-            .from('group_classes')
-            .select('id, name, subject, tutor_id')
-            .in('id', classIds)
-            .eq('tutor_id', activeTutorId)
-            .order('name');
-
-        if (classError) throw classError;
-
-        if (!classes || classes.length === 0) {
-            groupClassEl.innerHTML = '<option value="">Không có lớp nhóm của tutor hiện tại</option>';
-            return;
-        }
-
-        groupClassEl.innerHTML =
-            '<option value="">Chọn lớp</option>' +
-            classes.map(c => `
-                <option value="${c.id}">
-                    ${escapeHtml(c.name)}${c.subject ? ` — ${escapeHtml(c.subject)}` : ''}
-                </option>
-            `).join('');
-
-        if (selectedId && classes.some(c => c.id === selectedId)) {
-            groupClassEl.value = selectedId;
-            await loadGroupSessions(selectedSessionId);
-        }
-    }
-
-    async function loadGroupSessions(selectedSessionId = null) {
-        groupSessionEl.innerHTML = '<option value="">Đang tải buổi học...</option>';
-
-        const classId = groupClassEl.value;
-
-        if (!classId) {
-            groupSessionEl.innerHTML = '<option value="">Không chọn buổi</option>';
-            return;
-        }
-
-        const { data: cls, error: clsError } = await supabaseClient
-            .from('group_classes')
-            .select('id')
-            .eq('id', classId)
-            .eq('tutor_id', activeTutorId)
-            .maybeSingle();
-
-        if (clsError || !cls) {
-            groupSessionEl.innerHTML = '<option value="">Không tìm thấy lớp</option>';
-            return;
-        }
-
-        const { data: sessions, error } = await supabaseClient
+        const { data: sessions } = await supabaseClient
             .from('group_sessions')
-            .select('id, scheduled_date, start_time, status')
-            .eq('group_class_id', classId)
+            .select('id, scheduled_date')
+            .eq('group_class_id', groupClassId)
             .order('scheduled_date', { ascending: false });
 
-        if (error) {
-            console.error('Error loading group sessions:', error);
-            groupSessionEl.innerHTML = '<option value="">Không tải được buổi học</option>';
-            return;
-        }
-
-        groupSessionEl.innerHTML =
-            '<option value="">Không chọn buổi</option>' +
-            (sessions || []).map(s => `
-                <option value="${s.id}">
-                    ${escapeHtml(s.scheduled_date)}
-                    ${s.start_time ? ` — ${escapeHtml(s.start_time)}` : ''}
-                    ${s.status ? ` — ${escapeHtml(s.status)}` : ''}
-                </option>
-            `).join('');
-
-        if (selectedSessionId && (sessions || []).some(s => s.id === selectedSessionId)) {
-            groupSessionEl.value = selectedSessionId;
-        }
+        sessionEl.innerHTML = '<option value="">Không chọn buổi</option>' +
+            (sessions || []).map(s => `<option value="${s.id}" ${s.id === existing?.group_session_id ? 'selected' : ''}>${escapeHtml(s.scheduled_date)}</option>`).join('');
     }
-
-    async function toggleSource() {
-        const source = document.querySelector('input[name="prog-source"]:checked')?.value || 'one_to_one';
-
-        groupFields.style.display = source === 'group' ? 'block' : 'none';
-
-        if (source === 'group') {
-            try {
-                await loadStudentGroupClasses(
-                    existing?.group_class_id || null,
-                    existing?.group_session_id || null
-                );
-            } catch (err) {
-                console.error('Error loading student group classes:', err);
-                groupClassEl.innerHTML = '<option value="">Không tải được lớp</option>';
-            }
-        }
-    }
-
-    sourceInputs.forEach(input => input.addEventListener('change', toggleSource));
-    groupClassEl.addEventListener('change', () => loadGroupSessions());
-
-    await toggleSource();
 
     document.getElementById('progress-form').onsubmit = async (e) => {
         e.preventDefault();
-
-        const sourceType =
-            document.querySelector('input[name="prog-source"]:checked')?.value || 'one_to_one';
-
-        const groupClassId =
-            sourceType === 'group' ? (groupClassEl.value || null) : null;
-
-        const groupSessionId =
-            sourceType === 'group' ? (groupSessionEl.value || null) : null;
-
-        if (sourceType === 'group' && !groupClassId) {
-            showToast('⚠️', 'Vui lòng chọn lớp nhóm.', '');
-            return;
-        }
+        const sId = contextSourceType === 'group' ? document.getElementById('prog-student').value : studentId;
+        
+        if (!sId) { showToast('⚠️', 'Vui lòng chọn học sinh.', ''); return; }
 
         await saveProgressRecord(
-            studentId,
+            sId,
             existing?.id || null,
             studentName,
             subject,
             {
-                source_type: sourceType,
+                source_type: contextSourceType,
                 group_class_id: groupClassId,
-                group_session_id: groupSessionId,
+                group_session_id: contextSourceType === 'group' ? document.getElementById('prog-group-session').value : null,
                 recorded_at: dateEl.value,
                 score: document.getElementById('prog-score').value,
                 assessment_type: document.getElementById('prog-type').value,
@@ -615,3 +707,16 @@ function escapeHtml(value) {
 function escapeHtmlAttr(value) {
     return escapeHtml(value);
 }
+async function openStudentProgress(studentId, studentName, subject) {
+    const pageEl = document.getElementById('tp-page-progress');
+    pageEl.innerHTML = `
+        <div class="block-card">
+            <button class="tp-nav-btn" onclick="initProgressModule()">← Quay lại</button>
+            <h3 style="margin-top:15px;">${escapeHtml(studentName)}</h3>
+            <div id="progress-detail-content">Đang tải...</div>
+        </div>
+    `;
+    await loadStudentProgressDetail(studentId, studentName, subject);
+}
+
+window.openStudentProgress = openStudentProgress; window.openGroupClassProgressDetail = openGroupClassProgressDetail; window.openProgressForm = openProgressForm; window.saveProgress = saveProgress; window.deleteProgress = deleteProgress;
