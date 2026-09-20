@@ -4718,7 +4718,7 @@
             // cache này cho việc lọc theo tháng + đếm completed/scheduled/cancelled/absent, KHÔNG gọi
             // Supabase thêm lần nào. completedLessons bên dưới lọc lại từ allLessons — hành vi các ô
             // KPI/bảng cũ của Admin Dashboard giữ NGUYÊN như trước.
-            const lessonsRes = await supabaseClient.from('lessons').select('id, student_id, duration, status, scheduled_date');
+            const lessonsRes = await supabaseClient.from('lessons').select('id, student_id, duration, status, scheduled_date, rate');
             console.log('[ADMIN DASHBOARD] all lessons:', lessonsRes.data, lessonsRes.error);
             var lessonsOk = !lessonsRes.error;
             var allLessons = lessonsOk ? (lessonsRes.data || []) : [];
