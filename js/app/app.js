@@ -1490,9 +1490,21 @@
         // Supabase data. Confirm 2 bước theo đúng yêu cầu.
         function settingsResetToDefaults() {
             if (!confirm('Bạn có chắc muốn đặt lại các tuỳ chọn giao diện và preference về mặc định?')) return;
-            if (!confirm('Xác nhận lần cuối: thao tác này sẽ đặt lại giao diện, thông báo và tuỳ chọn lịch về mặc định trên thiết bị này. Dữ liệu học sinh, lịch học và tài chính sẽ KHÔNG bị ảnh hưởng. Tiếp tục?')) return;
+            if (!confirm('Xác nhận lần cuối: thao tác này sẽ đặt lại giao diện, thông báo và tuỳ chọn lịch về mặc định trên thiết bị này. Dữ liệu học sinh, lịch học, tài chính, hồ sơ và ảnh đại diện sẽ KHÔNG bị ảnh hưởng. Tiếp tục?')) return;
 
-            localStorage.setItem(getTutorSettingsKey(), JSON.stringify(SETTINGS_DEFAULTS));
+            // Đọc settings hiện tại để bảo toàn các field không cần reset
+            var currentSettings = getTutorSettings();
+            
+            // Giữ lại các field không thuộc về preferences giao diện
+            var preserved = {
+                // Các field hồ sơ nếu có trong settings (dù hiện tại settings dường như không chứa chúng)
+                bio: currentSettings.bio 
+            };
+            
+            // Tạo object settings mới bằng cách trộn mặc định với các field bảo toàn (nếu cần)
+            var newSettings = Object.assign({}, SETTINGS_DEFAULTS, preserved);
+
+            localStorage.setItem(getTutorSettingsKey(), JSON.stringify(newSettings));
             document.body.classList.remove('compact-mode');
             // Theme mặc định của app là "dark" — chỉ đổi nếu đang light, tái sử dụng toggleTheme() hiện có.
             if (document.body.classList.contains('light-mode')) toggleTheme();
@@ -1505,7 +1517,7 @@
         // Supabase, gsm_users khi là tài khoản local cũ) + tutor settings (localStorage).
         function renderSettingsPage() {
             var s = getTutorSettings();
-            var displayName, email, phone;
+            var displayName = '', email = '', phone = '';
             var searchInput = document.getElementById('settings-search-input');
             if (searchInput) searchInput.value = '';
 
@@ -1515,10 +1527,12 @@
                 email = currentTutorAuthEmail || '';
             } else {
                 var users = getUsers();
-                var info = users[currentUser] || {};
-                displayName = info.displayName || currentUser || '';
-                phone = info.phone || '';
-                email = currentUser || '';
+                if (currentUser && users[currentUser]) {
+                    var info = users[currentUser] || {};
+                    displayName = info.displayName || currentUser || '';
+                    phone = info.phone || '';
+                    email = currentUser || '';
+                }
             }
 
             document.getElementById('settings-input-name').value = displayName;
@@ -1529,11 +1543,14 @@
             document.getElementById('settings-profile-email-preview').innerText = email || '';
             document.getElementById('settings-profile-error').style.display = 'none';
 
-            // Avatar preview — tái sử dụng ĐÚNG dữ liệu avatar (emoji/màu) của hệ thống avatar hiện có.
-            var users2 = getUsers(); var avInfo = users2[currentUser] || {};
-            var avPrev = document.getElementById('settings-avatar-preview');
-            if (avInfo.avatarEmoji) { avPrev.innerText = avInfo.avatarEmoji; avPrev.style.background = '#1a2a3a'; }
-            else { avPrev.innerText = (displayName || currentUser || '?').charAt(0).toUpperCase(); avPrev.style.background = avInfo.avatarColor || AVATAR_COLORS[0]; }
+            // Avatar preview — chỉ render nếu user hợp lệ để bảo vệ dữ liệu cũ
+            var users2 = getUsers();
+            if (currentUser && users2[currentUser]) {
+                var avInfo = users2[currentUser] || {};
+                var avPrev = document.getElementById('settings-avatar-preview');
+                if (avInfo.avatarEmoji) { avPrev.innerText = avInfo.avatarEmoji; avPrev.style.background = '#1a2a3a'; }
+                else { avPrev.innerText = (displayName || currentUser || '?').charAt(0).toUpperCase(); avPrev.style.background = avInfo.avatarColor || AVATAR_COLORS[0]; }
+            }
 
             updateSettingsThemeButtons();
             document.getElementById('settings-compact-toggle').checked = !!s.compact;
@@ -1590,7 +1607,29 @@
 
             if (!name) { errEl.innerText = '⚠️ Vui lòng nhập tên hiển thị.'; errEl.style.display = 'block'; return; }
 
+            // 1. Validation BEFORE any changes
+            if (!isSupabaseTutorSession) {
+                if (!currentUser) { errEl.innerText = '⚠️ Phiên không hợp lệ.'; errEl.style.display = 'block'; return; }
+                var users = getUsers();
+                if (!users[currentUser]) { errEl.innerText = '⚠️ Người dùng không tồn tại.'; errEl.style.display = 'block'; return; }
+            }
+
+            // 2. Perform saves
             saveTutorSettingsPatch({ bio: bio }); // bio: luôn localStorage, không có cột Supabase
+
+            if (!isSupabaseTutorSession) {
+                // Preserve avatar fields
+                var users = getUsers();
+                var existingUser = users[currentUser];
+                users[currentUser] = {
+                    ...existingUser,
+                    displayName: name,
+                    phone: phone
+                };
+                saveUsers(users);
+                showToast('✅', 'Đã lưu hồ sơ', 'Thông tin đã được cập nhật.');
+                return;
+            }
 
             saveBtn.disabled = true;
             saveBtn.innerText = 'Đang lưu...';
@@ -1605,10 +1644,6 @@
                     return;
                 }
                 if (!result.confirmed) {
-                    // UPDATE không báo lỗi nhưng dữ liệu trên Supabase KHÔNG đổi. Bảng tutors hiện ĐÃ
-                    // có policy cho Tutor tự UPDATE hàng của mình, nên trường hợp này không còn do
-                    // thiếu quyền như trước — có thể do lỗi mạng/đồng bộ tạm thời. Báo thật, không giả
-                    // vờ đã lưu (mục 14: không tạo mock functionality).
                     errEl.innerText = '⚠️ Không lưu được lên hệ thống: dữ liệu chưa được cập nhật, vui lòng thử lại. Phần "Giới thiệu ngắn" đã được lưu trên thiết bị này.';
                     errEl.style.display = 'block';
                     return;
@@ -1620,9 +1655,6 @@
                 renderSettingsPage();
                 showToast('✅', 'Đã lưu hồ sơ', name);
             } else {
-                // AUTH 2.0 Phase 3: không còn phiên local-only nào được hỗ trợ — mọi phiên hợp lệ
-                // giờ đều phải là Supabase (Tutor/Admin). Nếu rơi vào đây nghĩa là state bất thường
-                // (ví dụ session đã hết hạn) — báo lỗi thay vì âm thầm ghi vào gsm_users.
                 saveBtn.disabled = false;
                 saveBtn.innerText = '💾 Lưu hồ sơ';
                 errEl.innerText = '⚠️ Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.';
