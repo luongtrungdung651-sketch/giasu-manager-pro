@@ -1527,11 +1527,12 @@
                 email = currentTutorAuthEmail || '';
             } else {
                 var users = getUsers();
-                if (currentUser && users[currentUser]) {
-                    var info = users[currentUser] || {};
-                    displayName = info.displayName || currentUser || '';
+                var userId = getStableTutorIdentity();
+                if (userId && users[userId]) {
+                    var info = users[userId] || {};
+                    displayName = info.displayName || userId || '';
                     phone = info.phone || '';
-                    email = currentUser || '';
+                    email = userId || '';
                 }
             }
 
@@ -1545,11 +1546,17 @@
 
             // Avatar preview — chỉ render nếu user hợp lệ để bảo vệ dữ liệu cũ
             var users2 = getUsers();
-            if (currentUser && users2[currentUser]) {
-                var avInfo = users2[currentUser] || {};
+            var userId2 = getStableTutorIdentity();
+            if (userId2 && users2[userId2]) {
+                var avInfo = users2[userId2] || {};
                 var avPrev = document.getElementById('settings-avatar-preview');
-                if (avInfo.avatarEmoji) { avPrev.innerText = avInfo.avatarEmoji; avPrev.style.background = '#1a2a3a'; }
-                else { avPrev.innerText = (displayName || currentUser || '?').charAt(0).toUpperCase(); avPrev.style.background = avInfo.avatarColor || AVATAR_COLORS[0]; }
+                if (avInfo.avatarImage) {
+                    avPrev.innerHTML = '<img src="'+avInfo.avatarImage+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                } else if (avInfo.avatarEmoji) {
+                    avPrev.innerHTML = ''; avPrev.innerText = avInfo.avatarEmoji; avPrev.style.background = '#1a2a3a';
+                } else {
+                    avPrev.innerHTML = ''; avPrev.innerText = (displayName || userId2 || '?').charAt(0).toUpperCase(); avPrev.style.background = avInfo.avatarColor || AVATAR_COLORS[0];
+                }
             }
 
             updateSettingsThemeButtons();
@@ -1608,10 +1615,11 @@
             if (!name) { errEl.innerText = '⚠️ Vui lòng nhập tên hiển thị.'; errEl.style.display = 'block'; return; }
 
             // 1. Validation BEFORE any changes
+            var userId = getStableTutorIdentity();
             if (!isSupabaseTutorSession) {
-                if (!currentUser) { errEl.innerText = '⚠️ Phiên không hợp lệ.'; errEl.style.display = 'block'; return; }
+                if (!userId) { errEl.innerText = '⚠️ Phiên không hợp lệ.'; errEl.style.display = 'block'; return; }
                 var users = getUsers();
-                if (!users[currentUser]) { errEl.innerText = '⚠️ Người dùng không tồn tại.'; errEl.style.display = 'block'; return; }
+                if (!users[userId]) { errEl.innerText = '⚠️ Người dùng không tồn tại.'; errEl.style.display = 'block'; return; }
             }
 
             // 2. Perform saves
@@ -1620,8 +1628,8 @@
             if (!isSupabaseTutorSession) {
                 // Preserve avatar fields
                 var users = getUsers();
-                var existingUser = users[currentUser];
-                users[currentUser] = {
+                var existingUser = users[userId];
+                users[userId] = {
                     ...existingUser,
                     displayName: name,
                     phone: phone
@@ -1651,7 +1659,13 @@
                 currentTutor.display_name = name;
                 currentTutor.phone = phone;
                 document.getElementById('nav-username-display').innerText = name;
-                document.getElementById('nav-avatar-text').innerText = (name || 'T').charAt(0).toUpperCase();
+                var userId = getStableTutorIdentity();
+                var users = getUsers();
+                if (userId && users[userId]) {
+                    updateNavAvatar(users[userId]);
+                } else {
+                    document.getElementById('nav-avatar-text').innerText = (name || 'T').charAt(0).toUpperCase();
+                }
                 renderSettingsPage();
                 showToast('✅', 'Đã lưu hồ sơ', name);
             } else {
@@ -3992,7 +4006,13 @@
             document.getElementById('login-view').style.display = 'none';
             document.getElementById('main-page-view').style.display = 'flex';
             var tutorDisplayName = tutor.display_name || authUserEmail;
-            document.getElementById('nav-avatar-text').innerText = (tutorDisplayName || 'T').charAt(0).toUpperCase();
+            var userId = getStableTutorIdentity();
+            var users = getUsers();
+            if (userId && users[userId]) {
+                updateNavAvatar(users[userId]);
+            } else {
+                document.getElementById('nav-avatar-text').innerText = (tutorDisplayName || 'T').charAt(0).toUpperCase();
+            }
             document.getElementById('nav-username-display').innerText = tutorDisplayName;
 
             toggleDay(getDefaultDayView()); applyCompactModeFromSettings();
@@ -5959,7 +5979,7 @@
 
             // ----- Bật chế độ "Admin quản lý hộ Tutor" trên CHÍNH trang Tutor Dashboard -----
             isAdminManagingTutor = true;
-            adminManagedTutorInfo = { id: tutor.id, display_name: tutorName, email: (tutorProfile && tutorProfile.email) || '' };
+            adminManagedTutorInfo = { id: tutor.id, user_id: tutor.user_id, display_name: tutorName, email: (tutorProfile && tutorProfile.email) || '' };
             activeTutorId = tutorId;
             classList = loadResult.classList;
             freeSchedule = { "Thứ 2":[],"Thứ 3":[],"Thứ 4":[],"Thứ 5":[],"Thứ 6":[],"Thứ 7":[],"Chủ Nhật":[] };
@@ -7081,8 +7101,14 @@
         function updateNavAvatar(info) {
             var navAv=document.getElementById('nav-avatar-text');
             if (!navAv) return;
-            if (info.avatarEmoji) { navAv.innerText=info.avatarEmoji; navAv.style.background='#1a2a3a'; navAv.style.fontSize='16px'; }
-            else { navAv.innerText=(info.displayName||currentUser).charAt(0).toUpperCase(); navAv.style.background=info.avatarColor||AVATAR_COLORS[0]; navAv.style.fontSize='12px'; }
+            if (info.avatarImage) {
+                navAv.innerHTML = '<img src="'+info.avatarImage+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                navAv.style.background = 'transparent'; // bỏ nền để ảnh hiển thị rõ
+            } else if (info.avatarEmoji) { 
+                navAv.innerHTML = info.avatarEmoji; navAv.style.background='#1a2a3a'; navAv.style.fontSize='16px'; 
+            } else { 
+                navAv.innerHTML = (info.displayName||currentUser||'?').charAt(0).toUpperCase(); navAv.style.background=info.avatarColor||AVATAR_COLORS[0]; navAv.style.fontSize='12px'; 
+            }
         }
 
         // ===== MONTHLY EVALUATION =====
@@ -7314,18 +7340,48 @@
             reader.readAsDataURL(file);
         }
 
+        function getStableTutorIdentity() {
+            // 1. Supabase Tutor session (Tutor tự đăng nhập)
+            if (isSupabaseTutorSession) {
+                // Ưu tiên dùng user_id (Auth UUID) làm canonical avatar key
+                if (currentTutor && currentTutor.user_id) return currentTutor.user_id;
+                return currentUser;
+            }
+
+            // 2. Admin quản lý Tutor (Supabase hoặc Local)
+            if (isAdminManagingTutor && adminManagedTutorInfo) {
+                // Ưu tiên dùng user_id (Tutor Auth UUID) làm canonical avatar key, fallback về ID
+                if (adminManagedTutorInfo.user_id) return adminManagedTutorInfo.user_id;
+                return activeTutorId;
+            }
+
+            // 3. Legacy/Local (bao gồm Admin view local)
+            if (typeof currentUser === 'string' && currentUser.startsWith('__admin_viewing_')) {
+                return currentUser.substring('__admin_viewing_'.length);
+            }
+            return currentUser;
+        }
+
         // Lưu avatar mới + cập nhật mọi nơi hiển thị avatar. Nếu lưu lỗi -> avatar cũ được giữ nguyên
         // (không ghi localStorage, không cập nhật UI) + báo lỗi rõ ràng.
-        function avatarSaveImage(base64DataUrl) {
+        async function avatarSaveImage(base64DataUrl) {
+            var userId = getStableTutorIdentity();
+            if (!userId) {
+                showToast('⚠️', 'Lỗi phiên', 'Không thể xác định tài khoản để lưu avatar.');
+                return;
+            }
             try {
                 var users = getUsers();
-                var info = users[currentUser] || {};
+                var info = users[userId] || {};
                 info.avatarImage = base64DataUrl;
                 info.avatarEmoji = null; info.avatarColor = null; // ảnh mới thay thế avatar cũ (kể cả emoji/màu tương thích ngược)
-                users[currentUser] = info;
+                users[userId] = info;
                 saveUsers(users);
                 updateNavAvatar(info);
+                
+                // Cập nhật preview trong Settings nếu đang mở
                 avatarUpdateSettingsPreview(info);
+                
                 showToast('✅','Đã cập nhật avatar','Ảnh đại diện mới đã được lưu.');
             } catch (err) {
                 console.error('avatarSaveImage lỗi:', err);

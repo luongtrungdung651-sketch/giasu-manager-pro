@@ -702,6 +702,26 @@
         .settings-reset-card { border-color: rgba(239,68,68,0.35); }
         .settings-reset-card h3 { color: #ef4444; }
 
+        #profile-settings-modal .modal-box {
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+    overflow: hidden;
+}
+#profile-settings-modal .modal-header {
+    flex-shrink: 0;
+}
+/* Tab switcher div (the second child in modal-box) */
+#profile-settings-modal .modal-box > div:nth-child(2) {
+    flex-shrink: 0;
+}
+#profile-settings-modal .modal-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+}
+
         /* ================================================================================
            ===== STUDENT PROFILE 2.0 (sp-*) =====
            Giữ nguyên design system hiện tại (--bg-card/--bg-card-sub/--border-color/--text-main/
